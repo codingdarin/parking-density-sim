@@ -1,5 +1,6 @@
 using System;
 using ParkingSim.Core.Grid;
+using ParkingSim.Scenarios;
 
 namespace ParkingSim
 {
@@ -7,39 +8,42 @@ namespace ParkingSim
     {
         private static void Main(string[] args)
         {
-            int? lanes = ParseLanes(args);
-            if (lanes.HasValue)
+            string command = args.Length > 0 ? args[0] : "carry";
+            int lanes = ParseLanes(args, defaultValue: command == "layout" ? -1 : 1);
+
+            switch (command)
             {
-                PrintLayout(lanes.Value);
-            }
-            else
-            {
-                for (int n = 0; n <= 3; n++)
-                    PrintLayout(n);
+                case "layout":
+                    if (lanes >= 0) PrintLayout(lanes);
+                    else for (int n = 0; n <= 3; n++) PrintLayout(n);
+                    break;
+                case "carry":
+                    CarryDemo.Run(lanes);
+                    break;
+                default:
+                    Console.WriteLine("사용법: [layout|carry] [점유 레인 0~3]");
+                    break;
             }
         }
 
         private static void PrintLayout(int occupiedLanes)
         {
-            var config = new LayoutConfig { OccupiedLanes = occupiedLanes };
-            var lot = ParkingLayoutBuilder.Build(config);
-
+            var lot = ParkingLayoutBuilder.Build(new LayoutConfig { OccupiedLanes = occupiedLanes });
             Console.WriteLine($"=== 통로 점유 {occupiedLanes}레인 ===");
             Console.WriteLine(TextRenderer.Render(lot));
+            Console.WriteLine(TextRenderer.Legend);
             Console.WriteLine(
                 $"수용: 주차면 {lot.StallCarCount}대 + 통로 {lot.CorridorCarCount}대(α) = {lot.Cars.Count}대" +
                 $" | S_필요(최원단 화재) = {lot.CorridorCarCount}대");
             Console.WriteLine();
         }
 
-        /// <summary>인자: 없음(0~3 전부) 또는 "--lanes N" / "N"</summary>
-        private static int? ParseLanes(string[] args)
+        private static int ParseLanes(string[] args, int defaultValue)
         {
-            if (args.Length == 0) return null;
-            string value = args[args.Length - 1];
-            if (int.TryParse(value, out int n)) return n;
-            Console.WriteLine($"알 수 없는 인자: {string.Join(" ", args)} — 사용법: [--lanes] <0~3>");
-            return null;
+            for (int i = args.Length - 1; i >= 0; i--)
+                if (int.TryParse(args[i], out int n))
+                    return n;
+            return defaultValue;
         }
     }
 }
