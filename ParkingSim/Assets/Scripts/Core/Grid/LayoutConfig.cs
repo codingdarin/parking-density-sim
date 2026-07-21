@@ -17,5 +17,12 @@ namespace ParkingSim.Core.Grid
 
         /// <summary>적치 용량 S(대). 기본은 충분히 크게 — 필요량은 산출물로 기록 (측정정의서 §3)</summary>
         public int StagingCapacityCars { get; set; } = 999;
+
+        /// <summary>
+        /// 통로변 적치 포켓의 통로 내 x 위치들 (셀). 북측 주차면 1칸을 싱크로 전환한다 —
+        /// 포켓 1개 = 주차면 1면 희생(α 트레이드오프). 분산 배치 시 왕복이 상수로 잡혀
+        /// T ∝ d² → T ∝ d 로 복원됨 (계획서 §0-1). 배정 규칙: 화재의 진입구 쪽 최근접 적치.
+        /// </summary>
+        public int[] StagingPocketXs { get; set; } = new int[0];
     }
 }
