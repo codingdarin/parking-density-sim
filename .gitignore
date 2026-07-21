@@ -1,0 +1,33 @@
+# ===== Unity (ParkingSim/) =====
+ParkingSim/[Ll]ibrary/
+ParkingSim/[Tt]emp/
+ParkingSim/[Oo]bj/
+ParkingSim/[Bb]uild/
+ParkingSim/[Bb]uilds/
+ParkingSim/[Ll]ogs/
+ParkingSim/[Uu]ser[Ss]ettings/
+ParkingSim/[Mm]emoryCaptures/
+ParkingSim/[Rr]ecordings/
+ParkingSim/Assets/AssetStoreTools*
+
+# Unity가 자동 생성하는 IDE 파일 (레포 추적 불필요)
+ParkingSim/*.csproj
+ParkingSim/*.sln
+ParkingSim/*.slnx
+ParkingSim/.vsconfig
+ParkingSim/.vscode/
+
+# Unity 빌드 산출물
+*.apk
+*.unitypackage
+*.app
+
+# ===== .NET (ConsoleSim/) =====
+ConsoleSim/bin/
+ConsoleSim/obj/
+.vs/
+*.user
+
+# ===== IDE =====
+.idea/
+.vscode/

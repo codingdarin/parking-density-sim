@@ -1,0 +1,18 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <OutputType>Exe</OutputType>
+    <TargetFramework>net8.0</TargetFramework>
+    <RootNamespace>ParkingSim</RootNamespace>
+    <!-- Unity(2022/6) 호환 유지: C# 9, 암시적 using 금지 -->
+    <LangVersion>9.0</LangVersion>
+    <ImplicitUsings>disable</ImplicitUsings>
+    <Nullable>disable</Nullable>
+  </PropertyGroup>
+
+  <!-- Unity 프로젝트의 Core 소스를 그대로 포함 — 이 빌드가 "Core는 Unity 비의존" 규칙의 컴파일 타임 가드 -->
+  <ItemGroup>
+    <Compile Include="..\ParkingSim\Assets\Scripts\Core\**\*.cs" LinkBase="Core" />
+  </ItemGroup>
+
+</Project>
