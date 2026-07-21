@@ -80,12 +80,12 @@ namespace ParkingSim.Core.Grid
                 for (int x = corridorStartX; x < corridorEndX; x++)
                     grid.SetType(x, y, CellType.Corridor);
             }
-            // 로봇 대기소(depot): 적치 블록 아래 4칸 — 운반 흐름(통로 행 y2~y4, 적치 앵커)과
-            // 절대 겹치지 않는 홈. 대기 중인 로봇이 하차·운반 경로를 막는 문제를 구조적으로 차단
+            // 로봇 대기소(depot): 적치 블록·도로 아래 일렬 4칸 — 운반 흐름(통로 행, 적치 앵커)과
+            // 겹치지 않고, 각 칸이 독립적으로 위쪽 통행로에 접해 서로를 봉쇄하지 않음
+            // (2×2 블록은 바깥 칸 주차가 안쪽 칸 출입로를 영구 봉쇄 — D6에서 실측된 결함)
             int depotY = StallDepth + config.CorridorLanes;
-            for (int x = 0; x < StagingCells; x++)
-                for (int dy = 0; dy < StallDepth; dy++)
-                    grid.SetType(x, depotY + dy, CellType.Road);
+            for (int x = 0; x < 4; x++)
+                grid.SetType(x, depotY, CellType.Road);
 
             var pocketSet = new HashSet<int>(config.StagingPocketXs ?? new int[0]);
             for (int x = corridorStartX; x < corridorEndX; x++)
