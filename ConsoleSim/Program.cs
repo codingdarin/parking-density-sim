@@ -23,8 +23,14 @@ namespace ParkingSim
                 case "multi":
                     MultiRobotDemo.Run(printEveryTick: Array.IndexOf(args, "--all") >= 0);
                     break;
+                case "test":
+                    Environment.ExitCode = Tests.AdversarialTests.RunAll() ? 0 : 1;
+                    break;
+                case "baseline":
+                    Tests.AdversarialTests.RunNoCoordinationBaseline();
+                    break;
                 default:
-                    Console.WriteLine("사용법: [layout|carry|multi] [점유 레인 0~3] [--all]");
+                    Console.WriteLine("사용법: [layout|carry|multi|test|baseline] [점유 레인 0~3] [--all]");
                     break;
             }
         }
