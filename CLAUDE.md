@@ -25,6 +25,7 @@
 - 형식: `<type>: <한국어 요약>` — type은 `feat` `fix` `docs` `test` `refactor` `chore`
 - **작동하는 상태로만 커밋** (빌드 깨진 채 커밋 금지, 커밋 전 `dotnet build ConsoleSim`)
 - 커밋·푸시는 사용자가 요청할 때만
+- **`Co-Authored-By` 등 AI 크레딧 라인을 커밋 메시지에 넣지 않는다**
 
 ## 일정 규율
 
