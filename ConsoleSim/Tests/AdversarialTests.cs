@@ -12,7 +12,8 @@ namespace ParkingSim.Tests
     /// </summary>
     public static class AdversarialTests
     {
-        public static bool RunAll()
+        /// <summary>통과한 테스트 수를 반환 (전부 통과 = 5)</summary>
+        public static int RunAll()
         {
             var tests = new (string Name, Func<bool> Test)[]
             {
@@ -37,7 +38,27 @@ namespace ParkingSim.Tests
                 if (ok) passed++;
             }
             Console.WriteLine($"\n{passed}/{tests.Length} 통과");
-            return passed == tests.Length;
+            return passed;
+        }
+
+        /// <summary>
+        /// 건전성 검사(뮤테이션 테스트): 예약 테이블을 끄고 같은 5종을 돌린다.
+        /// 전부 실패해야 정상 — 하나라도 통과하면 그 테스트는 조정 메커니즘을 검증하지 않는 것.
+        /// (⑤도 절반이 예약 기반 차단이라 실패해야 함)
+        /// </summary>
+        public static bool RunSanityCheck()
+        {
+            Console.WriteLine("=== 건전성 검사: 예약 테이블 비활성화 상태에서 동일 테스트 실행 ===");
+            int passed;
+            TestSupport.CoordinationDisabled = true;
+            try { passed = RunAll(); }
+            finally { TestSupport.CoordinationDisabled = false; }
+
+            bool ok = passed == 0;
+            Console.WriteLine(ok
+                ? "→ 건전성 확인: 예약 없이는 5종 전부 실패. 테스트가 실제로 조정 메커니즘을 검증한다."
+                : $"→ !! 경고: 예약 없이도 {passed}종 통과 — 해당 테스트는 아무것도 검증하지 않는다.");
+            return ok;
         }
 
         /// <summary>폭 1 통로 양끝에서 마주 오는 두 로봇 — 후순위가 대피 베이(6,1)로 비켜야 함.</summary>

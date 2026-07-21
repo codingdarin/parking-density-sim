@@ -10,6 +10,12 @@ namespace ParkingSim.Tests
     {
         private static readonly (int Dx, int Dy)[] OneCell = { (0, 0) };
 
+        /// <summary>
+        /// 건전성 검사용: true면 계획이 예약 테이블을 무시하고 기록도 하지 않는다.
+        /// 이 상태에서 적대적 테스트가 하나라도 통과하면 그 테스트는 조정 메커니즘을 검증하지 않는 것.
+        /// </summary>
+        public static bool CoordinationDisabled = false;
+
         /// <summary>지정 셀만 주행 가능(Road)한 격자</summary>
         public static GridMap SparseGrid(int width, int height, IEnumerable<(int X, int Y)> roadCells)
         {
@@ -34,14 +40,18 @@ namespace ParkingSim.Tests
             GridMap g, ReservationTable rt, (int X, int Y) start, (int X, int Y) goal,
             int maxTick = 200, bool parkAtGoal = true, int maxExpansions = 200000)
         {
+            var effective = CoordinationDisabled ? new ReservationTable() : rt;
             var path = SpaceTimeAStar.FindPath(start, 0, goal, OneCell,
-                (x, y, t) => Drivable(g, x, y) && rt.IsFree(x, y, t), maxTick, maxExpansions);
+                (x, y, t) => Drivable(g, x, y) && effective.IsFree(x, y, t), maxTick, maxExpansions);
             if (path == null) return null;
 
-            for (int t = 0; t < path.Count; t++)
-                rt.ReserveStep(path[t].X, path[t].Y, t);
-            if (parkAtGoal)
-                rt.ReserveFrom(goal.X, goal.Y, path.Count - 1);
+            if (!CoordinationDisabled)
+            {
+                for (int t = 0; t < path.Count; t++)
+                    rt.ReserveStep(path[t].X, path[t].Y, t);
+                if (parkAtGoal)
+                    rt.ReserveFrom(goal.X, goal.Y, path.Count - 1);
+            }
             return path;
         }
 
