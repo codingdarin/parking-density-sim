@@ -19,11 +19,41 @@ namespace ParkingSim.Core.Agents
         private static readonly (int Dx, int Dy)[] OneCell = { (0, 0) };
         private static readonly (int Dx, int Dy)[] TwoCellHorizontal = { (0, 0), (1, 0) };
 
-        /// <summary>미션 계획 실패 시 null (예약·liftTicks 미변경).</summary>
+        /// <summary>빈 몸 재배치 (미션 간 이동·후퇴). 도착 후 영구 주차. 실패 시 null.</summary>
+        public static RobotTimeline PlanRelocation(
+            GridMap grid, ReservationTable reservations, Dictionary<int, int> carLiftTicks,
+            int robotId, (int X, int Y) start, (int X, int Y) goal, int maxTick, int startTick)
+        {
+            bool CellOk(int x, int y, int t)
+            {
+                if (!grid.InBounds(x, y)) return false;
+                var type = grid.TypeAt(x, y);
+                if (type == CellType.Outside || type == CellType.Stall) return false;
+                int carId = grid.CarAt(x, y);
+                if (carId != 0 && !(carLiftTicks.TryGetValue(carId, out int lift) && t >= lift))
+                    return false;
+                return reservations.IsFree(x, y, t);
+            }
+
+            var path = SpaceTimeAStar.FindPath(start, startTick, goal, OneCell,
+                (x, y, t) => CellOk(x, y, t), maxTick);
+            if (path == null) return null;
+
+            var steps = new List<(int X, int Y, bool Carrying)>();
+            foreach (var (x, y) in path)
+                steps.Add((x, y, false));
+            for (int i = 0; i < steps.Count; i++)
+                reservations.ReserveStep(steps[i].X, steps[i].Y, startTick + i);
+            reservations.ReserveFrom(goal.X, goal.Y, startTick + steps.Count - 1);
+
+            return new RobotTimeline(robotId, 0, startTick, -1, -1, steps);
+        }
+
+        /// <summary>미션 계획 실패 시 null (예약·liftTicks 미변경). startTick = 미션 시작 전역 틱 (체이닝용).</summary>
         public static RobotTimeline PlanCarryMission(
             GridMap grid, ReservationTable reservations, Dictionary<int, int> carLiftTicks,
             int robotId, (int X, int Y) start, Car target,
-            (int X, int Y) dropAnchor, (int X, int Y)? home, int maxTick)
+            (int X, int Y) dropAnchor, (int X, int Y)? home, int maxTick, int startTick = 0)
         {
             var steps = new List<(int X, int Y, bool Carrying)>();
 
@@ -44,14 +74,14 @@ namespace ParkingSim.Core.Agents
 
             // 1) 접근 (빈 몸 1셀, 대상 차량 셀만 도킹 진입 허용)
             var approach = SpaceTimeAStar.FindPath(
-                start, 0, (target.X, target.Y), OneCell,
+                start, startTick, (target.X, target.Y), OneCell,
                 (x, y, t) => CellOk(x, y, t, target.Id), maxTick);
             if (approach == null) return null;
             foreach (var (x, y) in approach)
                 steps.Add((x, y, false));
 
             // 2) 적재 1틱 — 이 틱부터 차량은 격자에서 사라지고 로봇 풋프린트가 된다
-            int liftTick = steps.Count;
+            int liftTick = startTick + steps.Count;
             steps.Add((target.X, target.Y, true));
             carLiftTicks[target.Id] = liftTick;
 
@@ -64,7 +94,7 @@ namespace ParkingSim.Core.Agents
                 steps.Add((carry[i].X, carry[i].Y, true));
 
             // 4) 하차 1틱 — 싱크: 차량 소멸, 로봇은 1셀로
-            int dropTick = steps.Count;
+            int dropTick = startTick + steps.Count;
             steps.Add((dropAnchor.X, dropAnchor.Y, false));
 
             // 5) 복귀 (홈 지정 시)
@@ -78,19 +108,20 @@ namespace ParkingSim.Core.Agents
                     steps.Add((back[i].X, back[i].Y, false));
             }
 
-            // 6) 예약 일괄 기록 (자기 미션 확정 후)
-            for (int t = 0; t < steps.Count; t++)
+            // 6) 예약 일괄 기록 (자기 미션 확정 후) — 전역 틱 기준
+            for (int i = 0; i < steps.Count; i++)
             {
-                var (x, y, carrying) = steps[t];
+                int t = startTick + i;
+                var (x, y, carrying) = steps[i];
                 reservations.ReserveStep(x, y, t);
                 if (carrying) reservations.ReserveStep(x + 1, y, t);
                 // 하차 틱은 내려놓는 차량 폭까지 보수적으로 예약
                 if (t == dropTick) reservations.ReserveStep(x + 1, y, t);
             }
             var last = steps[steps.Count - 1];
-            reservations.ReserveFrom(last.X, last.Y, steps.Count - 1);
+            reservations.ReserveFrom(last.X, last.Y, startTick + steps.Count - 1);
 
-            return new RobotTimeline(robotId, target.Id, liftTick, dropTick, steps);
+            return new RobotTimeline(robotId, target.Id, startTick, liftTick, dropTick, steps);
         }
     }
 }
