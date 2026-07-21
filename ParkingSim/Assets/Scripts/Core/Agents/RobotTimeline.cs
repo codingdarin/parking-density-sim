@@ -9,16 +9,20 @@ namespace ParkingSim.Core.Agents
     {
         public int RobotId { get; }
         public int TargetCarId { get; }
+        /// <summary>이 미션이 시작되는 전역 틱 (Steps[0]의 시각)</summary>
+        public int StartTick { get; }
+        /// <summary>전역 틱 기준</summary>
         public int LiftTick { get; }
         public int DropTick { get; }
         public IReadOnlyList<(int X, int Y, bool Carrying)> Steps { get; }
-        public int EndTick => Steps.Count - 1;
+        public int EndTick => StartTick + Steps.Count - 1;
 
-        public RobotTimeline(int robotId, int targetCarId, int liftTick, int dropTick,
+        public RobotTimeline(int robotId, int targetCarId, int startTick, int liftTick, int dropTick,
             List<(int X, int Y, bool Carrying)> steps)
         {
             RobotId = robotId;
             TargetCarId = targetCarId;
+            StartTick = startTick;
             LiftTick = liftTick;
             DropTick = dropTick;
             Steps = steps;
@@ -26,8 +30,10 @@ namespace ParkingSim.Core.Agents
 
         public (int X, int Y, bool Carrying) At(int tick)
         {
-            if (tick >= Steps.Count) return Steps[Steps.Count - 1];
-            return Steps[tick];
+            int idx = tick - StartTick;
+            if (idx < 0) idx = 0;
+            if (idx >= Steps.Count) idx = Steps.Count - 1;
+            return Steps[idx];
         }
 
         /// <summary>제자리 대기 틱 수 (이동 없이 보낸 틱 — 혼잡 지표)</summary>
@@ -37,9 +43,12 @@ namespace ParkingSim.Core.Agents
             {
                 int waits = 0;
                 for (int i = 1; i < Steps.Count; i++)
+                {
+                    int globalTick = StartTick + i;
                     if (Steps[i].X == Steps[i - 1].X && Steps[i].Y == Steps[i - 1].Y &&
-                        i != LiftTick && i != DropTick)
+                        globalTick != LiftTick && globalTick != DropTick)
                         waits++;
+                }
                 return waits;
             }
         }

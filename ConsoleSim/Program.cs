@@ -32,6 +32,14 @@ namespace ParkingSim
                 case "baseline":
                     Tests.AdversarialTests.RunNoCoordinationBaseline();
                     break;
+                case "emergency":
+                {
+                    double fire = 40;
+                    foreach (var a in args)
+                        if (a.StartsWith("--fire=") && double.TryParse(a.Substring(7), out double f)) fire = f;
+                    EmergencyDemo.Run(lanes, fire, usePockets: Array.IndexOf(args, "--pockets") >= 0);
+                    break;
+                }
                 default:
                     Console.WriteLine("사용법: [layout|carry|multi|test|sanity|baseline] [점유 레인 0~3] [--all]");
                     break;
