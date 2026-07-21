@@ -20,8 +20,11 @@ namespace ParkingSim
                 case "carry":
                     CarryDemo.Run(lanes);
                     break;
+                case "multi":
+                    MultiRobotDemo.Run(printEveryTick: Array.IndexOf(args, "--all") >= 0);
+                    break;
                 default:
-                    Console.WriteLine("사용법: [layout|carry] [점유 레인 0~3]");
+                    Console.WriteLine("사용법: [layout|carry|multi] [점유 레인 0~3] [--all]");
                     break;
             }
         }
