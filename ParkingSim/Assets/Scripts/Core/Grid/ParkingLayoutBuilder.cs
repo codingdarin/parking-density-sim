@@ -22,10 +22,13 @@ namespace ParkingSim.Core.Grid
         public int StallCarCount { get; }
         public int CorridorCarCount { get; }
 
+        /// <summary>통로변 적치 포켓의 x 위치들 (북측, 싱크 진입 셀은 통로에 인접한 y)</summary>
+        public IReadOnlyList<int> PocketXs { get; }
+
         internal ParkingLot(
             GridMap grid, LayoutConfig config, List<Car> cars,
             int corridorStartX, int corridorEndX, int[] laneYs,
-            int stallCarCount, int corridorCarCount)
+            int stallCarCount, int corridorCarCount, int[] pocketXs)
         {
             Grid = grid;
             Config = config;
@@ -35,6 +38,7 @@ namespace ParkingSim.Core.Grid
             LaneYs = laneYs;
             StallCarCount = stallCarCount;
             CorridorCarCount = corridorCarCount;
+            PocketXs = pocketXs;
         }
     }
 
@@ -76,11 +80,13 @@ namespace ParkingSim.Core.Grid
                 for (int x = corridorStartX; x < corridorEndX; x++)
                     grid.SetType(x, y, CellType.Corridor);
             }
+            var pocketSet = new HashSet<int>(config.StagingPocketXs ?? new int[0]);
             for (int x = corridorStartX; x < corridorEndX; x++)
             {
                 for (int d = 0; d < StallDepth; d++)
                 {
-                    grid.SetType(x, d, CellType.Stall);                    // 북측
+                    // 북측: 포켓 지정 x는 주차면 대신 적치 싱크
+                    grid.SetType(x, d, pocketSet.Contains(x) ? CellType.Staging : CellType.Stall);
                     grid.SetType(x, StallDepth + config.CorridorLanes + d, CellType.Stall); // 남측
                 }
             }
@@ -89,11 +95,12 @@ namespace ParkingSim.Core.Grid
             var cars = new List<Car>();
             int nextId = 1;
 
-            // 주차면: 만차 (스톨 = 세로 1×2)
+            // 주차면: 만차 (스톨 = 세로 1×2, 포켓 자리는 제외 — 포켓 1개 = 주차면 1면 희생)
             int southStallY = StallDepth + config.CorridorLanes;
             for (int x = corridorStartX; x < corridorEndX; x++)
             {
-                AddCar(grid, cars, new Car(nextId++, x, 0, horizontal: false, inCorridor: false));
+                if (!pocketSet.Contains(x))
+                    AddCar(grid, cars, new Car(nextId++, x, 0, horizontal: false, inCorridor: false));
                 AddCar(grid, cars, new Car(nextId++, x, southStallY, horizontal: false, inCorridor: false));
             }
             int stallCarCount = cars.Count;
@@ -106,8 +113,10 @@ namespace ParkingSim.Core.Grid
             }
             int corridorCarCount = cars.Count - stallCarCount;
 
+            var sortedPockets = new List<int>(pocketSet);
+            sortedPockets.Sort();
             return new ParkingLot(grid, config, cars, corridorStartX, corridorEndX, laneYs,
-                stallCarCount, corridorCarCount);
+                stallCarCount, corridorCarCount, sortedPockets.ToArray());
         }
 
         private static void AddCar(GridMap grid, List<Car> cars, Car car)
