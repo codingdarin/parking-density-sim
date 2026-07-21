@@ -20,12 +20,14 @@
 5. **Unity 에디터 의존 최소화**: 오브젝트는 코드 생성(`GameObject.CreatePrimitive`), 프리팹·인스펙터 연결 지양. asmdef는 P2 전까지 추가하지 않음
 6. Unity 쪽 빌드 산출물(`bin/obj`)이 `Assets/` 안에 생기지 않도록 ConsoleSim은 형제 디렉터리 유지
 
-## 커밋 컨벤션
+## 커밋·브랜치 규칙
 
 - 형식: `<type>: <한국어 요약>` — type은 `feat` `fix` `docs` `test` `refactor` `chore`
 - **작동하는 상태로만 커밋** (빌드 깨진 채 커밋 금지, 커밋 전 `dotnet build ConsoleSim`)
-- 커밋·푸시는 사용자가 요청할 때만
 - **`Co-Authored-By` 등 AI 크레딧 라인을 커밋 메시지에 넣지 않는다**
+- **브랜치 흐름**: `main` 직접 커밋 금지. 작업 브랜치(`feat/d4-tests`, `docs/...` 등)에서 커밋 →
+  `develop`에 `--no-ff` 머지 → `origin` 푸시까지가 한 사이클. main 반영은 사용자가 지시할 때만
+- **작업일지**: 일차 종료 시 `docs/작업일지.md`에 완료 사항·특이사항 append 후 함께 커밋
 
 ## 일정 규율
 
