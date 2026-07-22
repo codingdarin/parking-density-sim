@@ -15,7 +15,7 @@ namespace ParkingSim.Core.Metrics
         public static string EmergencyHeader() =>
             "lanes,fire_m,pockets,robots,seed,beta_cells,success,within_budget," +
             "clear_tick,clear_s,clear_min,s_needed,attempts,main_drops,pocket_drops,collisions," +
-            "makespan_tick,utilization,effective_p,envelope_s,deviation,fail_reason";
+            "makespan_tick,utilization,effective_p,drive_wait,drop_wait,idle_frac,envelope_s,deviation,fail_reason";
 
         public static string EmergencyRow(RunMetrics m)
         {
@@ -39,6 +39,9 @@ namespace ParkingSim.Core.Metrics
             Add(sb, m.MakespanTicks);
             Add(sb, F(m.Utilization, 3));
             Add(sb, F(m.EffectiveP, 3));
+            Add(sb, F(m.DriveWaitFrac, 3));
+            Add(sb, F(m.DropWaitFrac, 3));
+            Add(sb, F(m.IdleFrac, 3));
             Add(sb, F(m.EnvelopeSeconds, 1));
             Add(sb, F(m.DeviationRatio, 3));
             sb.Append(Quote(m.FailReason));

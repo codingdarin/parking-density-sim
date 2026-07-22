@@ -40,6 +40,12 @@ namespace ParkingSim
                     Scenarios.BatchRunner.Run(scenarioCsv);
                     break;
                 }
+                case "d9":
+                {
+                    string slice = args.Length > 1 ? args[1] : "all";
+                    Scenarios.D9SliceRunner.Run(slice);
+                    break;
+                }
                 case "normal":
                 {
                     int seed = 42, robots = 4;
@@ -60,7 +66,7 @@ namespace ParkingSim
                     break;
                 }
                 default:
-                    Console.WriteLine("사용법: [layout|carry|multi|test|sanity|baseline|emergency|batch|normal] [점유 레인 0~3] [--all]");
+                    Console.WriteLine("사용법: [layout|carry|multi|test|sanity|baseline|emergency|batch|d9|normal] [점유 레인 0~3] [--all]");
                     break;
             }
         }
