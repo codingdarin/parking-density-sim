@@ -106,5 +106,92 @@ namespace ParkingSim.Core.V2
                 (fireX, CorridorBottomY + 1),
                 required).Build(baseProblem);
         }
+
+        public static EmergencyScenarioBuildResultV2 BuildEmergencyWithPockets(
+            int fireMeters,
+            int pocketCount,
+            int robotStationCount = 8,
+            OperationTimingV2 timing = null,
+            int pocketOffset = 0)
+        {
+            if (pocketCount < 0 || pocketCount > 20)
+                throw new ArgumentOutOfRangeException(nameof(pocketCount));
+            if (fireMeters < 5 || fireMeters > 100 || fireMeters % 5 != 0)
+                throw new ArgumentOutOfRangeException(nameof(fireMeters));
+
+            EmergencyProblemV2 baseline = BuildBase(1, robotStationCount, timing);
+            int fireCells = fireMeters / 5 * 2;
+            int clearanceCells = Math.Min(CorridorCells, fireCells + BetaCells);
+            int selectedVehicles = clearanceCells / 2;
+            var pocketVehicleIndices = new HashSet<int>();
+            for (int pocket = 1; pocket <= pocketCount; pocket++)
+            {
+                int baselineIndex = pocket * selectedVehicles / (pocketCount + 1);
+                pocketVehicleIndices.Add((baselineIndex + pocketOffset) % selectedVehicles);
+            }
+
+            var entrance = baseline.Slots
+                .Where(slot => slot.Kind == SlotKind.Staging)
+                .Select(slot => slot.Pose)
+                .Take(selectedVehicles - pocketVehicleIndices.Count)
+                .GetEnumerator();
+            var orderedStaging = new List<VehiclePose>();
+            for (int vehicle = 0; vehicle < selectedVehicles; vehicle++)
+            {
+                if (pocketVehicleIndices.Contains(vehicle))
+                {
+                    VehiclePose source = baseline.Slots[vehicle].Pose;
+                    orderedStaging.Add(new VehiclePose(
+                        source.X, CorridorBottomY + 3, VehicleOrientation.Vertical));
+                }
+                else
+                {
+                    if (!entrance.MoveNext())
+                        throw new InvalidOperationException("진입구 적치면 생성 수 불일치");
+                    orderedStaging.Add(entrance.Current);
+                }
+            }
+
+            var slots = baseline.Slots
+                .Where(slot => slot.Kind == SlotKind.Blocking)
+                .Select(slot => new ParkingSlotV2(
+                    slot.Id, SlotKind.Blocking, slot.Pose))
+                .ToList();
+            foreach (VehiclePose pose in orderedStaging)
+                slots.Add(new ParkingSlotV2(slots.Count, SlotKind.Staging, pose));
+            var fixedVehicles = baseline.FixedVehiclePoses
+                .Where(fixedPose => !orderedStaging.Any(staging => Overlaps(fixedPose, staging)))
+                .ToArray();
+            var customized = new EmergencyProblemV2(
+                baseline.Width,
+                baseline.Height,
+                baseline.CopyFloor(),
+                slots,
+                Enumerable.Range(0, baseline.VehicleCount),
+                baseline.RobotStarts,
+                new (int X, int Y)[0],
+                fixedVehicles,
+                timing);
+
+            var required = new List<(int X, int Y)>();
+            for (int x = CorridorEntranceX; x < CorridorEntranceX + clearanceCells; x++)
+                for (int lane = 0; lane < 3; lane++)
+                    required.Add((x, CorridorBottomY + lane));
+            int fireX = Math.Min(
+                CorridorEntranceX + CorridorCells - 1,
+                CorridorEntranceX + fireCells - 1);
+            return new EmergencyScenarioV2(
+                $"corridor-l1-d{fireMeters}-p{pocketCount}-o{pocketOffset}",
+                (fireX, CorridorBottomY + 1),
+                required).Build(customized);
+        }
+
+        private static bool Overlaps(VehiclePose a, VehiclePose b)
+        {
+            return (a.X == b.X && a.Y == b.Y) ||
+                   (a.X == b.SecondCell.X && a.Y == b.SecondCell.Y) ||
+                   (a.SecondCell.X == b.X && a.SecondCell.Y == b.Y) ||
+                   (a.SecondCell.X == b.SecondCell.X && a.SecondCell.Y == b.SecondCell.Y);
+        }
     }
 }

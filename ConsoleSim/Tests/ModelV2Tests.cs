@@ -42,7 +42,8 @@ namespace ParkingSim.Tests
             passed += Run("㉚ 운송 유닛 상한 — 8조가 차량8대에 각각 1임무", TestPipelinedEightRobots);
             passed += Run("㉛ 다차량 아파트형 — 차량8·고정차22·8조 46틱", TestApartmentSerialAisle);
             passed += Run("㉜ 운영 통로 팩토리 — 레인·거리별 차량 수와 유한 적치", TestCorridorScenarioFactory);
-            Console.WriteLine($"\nV2 타당성 게이트 {passed}/32 통과");
+            passed += Run("㉝ 포켓 강건성 — 14개 오프셋20종 모두 7분 통과", TestPocketLayoutRobustness);
+            Console.WriteLine($"\nV2 타당성 게이트 {passed}/33 통과");
             return passed;
         }
 
@@ -539,6 +540,26 @@ namespace ParkingSim.Tests
                 maxHighLevelCandidates: 8);
             Assert(result.Success && result.PhysicallyValid && result.Ticks == 43,
                 "운영 통로 1레인·d20 기준 43틱 불일치: " + result.FailReason);
+        }
+
+        private static void TestPocketLayoutRobustness()
+        {
+            for (int offset = 0; offset < 20; offset++)
+            {
+                EmergencyScenarioBuildResultV2 built =
+                    CorridorScenarioFactoryV2.BuildEmergencyWithPockets(
+                        100, 14, pocketOffset: offset);
+                Assert(built.Success && built.SelectedVehicleCount == 20,
+                    $"포켓14 오프셋{offset} 시나리오 생성 실패: {built.FailReason}");
+                Assert(built.Problem.StagingCapacity == 20,
+                    $"포켓14 오프셋{offset} 총 적치면20 불일치");
+                PipelinedPlanResultV2 result = PipelinedPrioritizedPlannerV2.Solve(
+                    built.Problem,
+                    activeRobotCount: 4,
+                    maxHighLevelCandidates: 8);
+                Assert(result.Success && result.PhysicallyValid && result.Ticks <= 168,
+                    $"포켓14 오프셋{offset} 7분 실패: {result.Ticks}틱 {result.FailReason}");
+            }
         }
 
         private static int Run(string name, Action test)
