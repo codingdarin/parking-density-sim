@@ -115,6 +115,60 @@ namespace ParkingSim.Core.V2
 
     public static class V2MapCatalog
     {
+        public static AsciiMapV2 ConstrainedApartmentVariant(int seed)
+        {
+            const int width = 20, height = 11;
+            var cells = new char[width, height];
+            for (int x = 0; x < width; x++)
+                for (int y = 0; y < height; y++) cells[x, y] = '#';
+
+            for (int x = 0; x < width; x++)
+            {
+                for (int y = 2; y <= 8; y++) cells[x, y] = '.';
+                cells[x, 7] = 'I';
+            }
+            for (int x = 0; x <= 4; x++)
+                for (int y = 0; y <= 3; y++) cells[x, y] = '.';
+            for (int x = 5; x < width; x++) cells[x, 2] = 'I';
+            cells[0, 0] = '|';
+            cells[3, 0] = '|';
+            cells[0, 5] = '1';
+            cells[3, 5] = '2';
+
+            var random = new Random(seed);
+            var topColumns = new HashSet<int>();
+            while (topColumns.Count < 2) topColumns.Add(random.Next(5, 16));
+            var bottomColumns = new HashSet<int>();
+            while (bottomColumns.Count < 2)
+            {
+                int x = random.Next(5, 16);
+                if (!topColumns.Contains(x)) bottomColumns.Add(x);
+            }
+            foreach (int x in topColumns) cells[x, 6] = '#';
+            foreach (int x in bottomColumns) cells[x, 4] = '#';
+
+            for (int x = 10; x < width; x++)
+                for (int y = 4; y <= 6; y++)
+                    if (cells[x, y] != '#') cells[x, y] = '!';
+
+            int horizontalX = random.Next(12, 17);
+            int verticalX;
+            do verticalX = random.Next(17, 20);
+            while (verticalX == horizontalX || verticalX == horizontalX + 1);
+            cells[horizontalX, 5] = '>';
+            cells[verticalX, 4] = '^';
+
+            var rows = new string[height];
+            for (int row = 0; row < height; row++)
+            {
+                int y = height - 1 - row;
+                var chars = new char[width];
+                for (int x = 0; x < width; x++) chars[x] = cells[x, y];
+                rows[row] = new string(chars);
+            }
+            return new AsciiMapV2("apartment-constrained-seed-" + seed, rows);
+        }
+
         public static readonly AsciiMapV2 SmallParkingBlock = new AsciiMapV2(
             "small-parking-block",
             "############",

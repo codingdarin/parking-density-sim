@@ -36,7 +36,9 @@ namespace ParkingSim.Tests
             passed += Run("㉔ 대표 기하 — 혼합방향 소형 블록 exact 19틱 재현", TestPipelinedParkingBlock);
             passed += Run("㉕ 아파트 프로토타입 — 고정차16 보존·20틱 기준", TestPipelinedApartmentPrototype);
             passed += Run("㉖ 강화 아파트형 — 기둥·고정차35·41틱 기준", TestPipelinedConstrainedApartment);
-            Console.WriteLine($"\nV2 타당성 게이트 {passed}/26 통과");
+            passed += Run("㉗ 시드 맵 — 동일 시드 재현·다른 시드 변형", TestConstrainedApartmentSeedReproducibility);
+            passed += Run("㉘ 정적 가지치기 — 시드2 해 보존·확장 상한", TestStaticReachabilityPruningRegression);
+            Console.WriteLine($"\nV2 타당성 게이트 {passed}/28 통과");
             return passed;
         }
 
@@ -431,6 +433,39 @@ namespace ParkingSim.Tests
             Assert(result.Success && result.PhysicallyValid, result.FailReason);
             Assert(result.Ticks == 41, "강화 아파트형 기준 41틱 불일치");
             Assert(map.FixedVehiclePoses.Count == 35, "고정차량 35대 보존 실패");
+        }
+
+        private static void TestConstrainedApartmentSeedReproducibility()
+        {
+            AsciiMapV2 first = V2MapCatalog.ConstrainedApartmentVariant(7);
+            AsciiMapV2 repeated = V2MapCatalog.ConstrainedApartmentVariant(7);
+            AsciiMapV2 different = V2MapCatalog.ConstrainedApartmentVariant(8);
+            Assert(first.RowsTopDown.SequenceEqual(repeated.RowsTopDown),
+                "동일 시드가 같은 ASCII 배치를 재현하지 못함");
+            Assert(!first.RowsTopDown.SequenceEqual(different.RowsTopDown),
+                "다른 시드가 동일한 ASCII 배치를 생성함");
+
+            EmergencyProblemV2 problem = first.Build();
+            Assert(problem.Width == 20 && problem.Height == 11,
+                "시드 맵 크기 20×11 불일치");
+            Assert(problem.FixedVehiclePoses.Count == 35 &&
+                   problem.VehicleCount == 2 && problem.StagingCapacity == 2,
+                "시드 맵의 고정차량·이동차량·적치면 수 불일치");
+        }
+
+        private static void TestStaticReachabilityPruningRegression()
+        {
+            EmergencyProblemV2 map = V2MapCatalog.ConstrainedApartmentVariant(2).Build();
+            var scenario = new EmergencyScenarioV2(
+                "static-pruning-regression", (19, 5), map.CopyClearanceCells());
+            EmergencyScenarioBuildResultV2 built = scenario.Build(map);
+            Assert(built.Success, built.FailReason);
+
+            PipelinedPlanResultV2 result = PipelinedPrioritizedPlannerV2.Solve(built.Problem);
+            Assert(result.Success && result.PhysicallyValid, result.FailReason);
+            Assert(result.Ticks == 39, "정적 가지치기 후 시드2 makespan 39틱 불일치");
+            Assert(result.ExpandedStates < 1000,
+                "정적 불가능 조합이 시간축 탐색으로 다시 누출됨: " + result.ExpandedStates);
         }
 
         private static int Run(string name, Action test)

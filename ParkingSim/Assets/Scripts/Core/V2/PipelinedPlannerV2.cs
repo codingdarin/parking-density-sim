@@ -324,6 +324,7 @@ namespace ParkingSim.Core.V2
             attemptedExpansions = 0;
             VehiclePose source = schedules[vehicle].Source;
             VehiclePose target = problem.Slots[destination].Pose;
+            if (!StaticLoadedReachable(problem, source, target, vehicle, schedules)) return null;
             int approachExpansions;
             List<SearchState> approach = Search(
                 problem,
@@ -492,6 +493,57 @@ namespace ParkingSim.Core.V2
                 }
             }
             return true;
+        }
+
+        private static bool StaticLoadedReachable(
+            EmergencyProblemV2 problem,
+            VehiclePose start,
+            VehiclePose goal,
+            int ignoreVehicle,
+            VehicleSchedule[] schedules)
+        {
+            var blocked = new HashSet<(int X, int Y)>();
+            foreach (VehiclePose fixedPose in problem.FixedVehiclePoses)
+            {
+                blocked.Add((fixedPose.X, fixedPose.Y));
+                blocked.Add(fixedPose.SecondCell);
+            }
+            for (int vehicle = 0; vehicle < schedules.Length; vehicle++)
+            {
+                if (vehicle == ignoreVehicle || schedules[vehicle].Planned) continue;
+                VehiclePose pose = schedules[vehicle].Source;
+                blocked.Add((pose.X, pose.Y));
+                blocked.Add(pose.SecondCell);
+            }
+
+            var queue = new Queue<VehiclePose>();
+            var seen = new HashSet<VehiclePose> { start };
+            queue.Enqueue(start);
+            while (queue.Count > 0)
+            {
+                VehiclePose current = queue.Dequeue();
+                if (current.Equals(goal)) return true;
+                foreach (VehiclePose next in StaticNeighbors(current))
+                {
+                    if (!problem.PoseFits(next) || PoseOverlaps(next, blocked) || !seen.Add(next)) continue;
+                    queue.Enqueue(next);
+                }
+            }
+            return false;
+        }
+
+        private static IEnumerable<VehiclePose> StaticNeighbors(VehiclePose pose)
+        {
+            yield return pose.Translate(1, 0);
+            yield return pose.Translate(-1, 0);
+            yield return pose.Translate(0, 1);
+            yield return pose.Translate(0, -1);
+            yield return pose.Rotate();
+        }
+
+        private static bool PoseOverlaps(VehiclePose pose, ISet<(int X, int Y)> blocked)
+        {
+            return blocked.Contains((pose.X, pose.Y)) || blocked.Contains(pose.SecondCell);
         }
 
         private static IEnumerable<SearchState> NextStates(SearchState current, bool loaded)
