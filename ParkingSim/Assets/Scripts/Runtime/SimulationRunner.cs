@@ -21,8 +21,8 @@ namespace ParkingSim.Runtime
 
         private const float SecondsPerTick = 0.32f;
         private const float EndHoldTicks = 5f;
-        private static readonly AsciiMapV2 ActiveMap = V2MapCatalog.ApartmentConstrainedPrototype;
-        private const string ActiveScenarioName = "apartment-constrained-clearance";
+        private static readonly AsciiMapV2 ActiveMap = V2MapCatalog.ApartmentSerialAisle;
+        private const string ActiveScenarioName = "apartment-serial-full-clearance";
 
         private EmergencyProblemV2 _problem;
         private PipelinedPlanResultV2 _plan;
@@ -37,7 +37,7 @@ namespace ParkingSim.Runtime
             EmergencyProblemV2 map = ActiveMap.Build();
             var scenario = new EmergencyScenarioV2(
                 ActiveScenarioName,
-                fireCell: (19, 5),
+                fireCell: (27, 7),
                 requiredClearanceCells: map.CopyClearanceCells());
             EmergencyScenarioBuildResultV2 built = scenario.Build(map);
             if (!built.Success)
@@ -89,7 +89,7 @@ namespace ParkingSim.Runtime
             int bTick = Mathf.Min(aTick + 1, _plan.Ticks);
             float fraction = bTick == aTick ? 0f : timelineTick - aTick;
 
-            for (int robot = 0; robot < 2; robot++)
+            for (int robot = 0; robot < _plan.RobotTimelines.Length; robot++)
             {
                 TimedRobotStateV2 a = StateAt(_plan.RobotTimelines[robot], aTick);
                 TimedRobotStateV2 b = StateAt(_plan.RobotTimelines[robot], bTick);
@@ -190,8 +190,8 @@ namespace ParkingSim.Runtime
 
         private void BuildRobots()
         {
-            _robotViews = new GameObject[2];
-            for (int robot = 0; robot < 2; robot++)
+            _robotViews = new GameObject[_plan.RobotTimelines.Length];
+            for (int robot = 0; robot < _plan.RobotTimelines.Length; robot++)
             {
                 var cube = GameObject.CreatePrimitive(PrimitiveType.Cube);
                 cube.name = "TransportUnit-" + (robot + 1);
@@ -286,9 +286,7 @@ namespace ParkingSim.Runtime
         private static Color RobotColor(int robot, bool carrying)
         {
             if (carrying) return new Color(1f, 0.48f, 0.05f);
-            return robot == 0
-                ? new Color(0.10f, 0.62f, 0.95f)
-                : new Color(0.12f, 0.88f, 0.76f);
+            return Color.HSVToRGB((robot * 0.137f + 0.52f) % 1f, 0.78f, 0.95f);
         }
 
         private static void SetColor(GameObject target, Color color)

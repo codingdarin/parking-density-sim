@@ -122,6 +122,62 @@ namespace ParkingSim.Core.V2
 
     public static class V2MapCatalog
     {
+        public static readonly AsciiMapV2 ApartmentSerialAisle = CreateApartmentSerialAisle();
+
+        private static AsciiMapV2 CreateApartmentSerialAisle()
+        {
+            const int width = 28, height = 15;
+            var cells = new char[width, height];
+            for (int x = 0; x < width; x++)
+                for (int y = 0; y < height; y++) cells[x, y] = '#';
+
+            // 좌측 적치실과 폭3 주통로. 차량은 적치실에서만 회전할 수 있다.
+            for (int x = 0; x <= 11; x++)
+                for (int y = 0; y <= 8; y++) cells[x, y] = '.';
+            for (int x = 0; x < width; x++)
+                for (int y = 6; y <= 8; y++) cells[x, y] = '.';
+
+            // 유한 적치면 8개와 고정된 대기소 8칸.
+            foreach (int x in new[] { 0, 3, 6, 9 })
+            {
+                cells[x, 0] = '|';
+                cells[x, 3] = '|';
+            }
+            for (int robot = 0; robot < 8; robot++) cells[robot, 5] = (char)('1' + robot);
+
+            // 상·하단 주차열. 빈 저상 유닛은 하부 진입 가능하지만 적재 차량은 통과 불가다.
+            for (int x = 0; x < width; x += 2)
+            {
+                cells[x, 9] = 'I';
+                cells[x, 10] = '.';
+            }
+            for (int x = 12; x < width; x += 2)
+            {
+                cells[x, 4] = 'I';
+                cells[x, 5] = '.';
+            }
+
+            // 확보구간과 연속 방해차 8대. 왼쪽 차부터 비워야 뒤 차량이 통과할 수 있다.
+            for (int x = 12; x < width; x++)
+                for (int y = 6; y <= 8; y++) cells[x, y] = '!';
+            for (int x = 12; x < width; x += 2) cells[x, 7] = '>';
+
+            // 중심선은 유지하되 상·하행을 번갈아 막아 적재 교행을 제약한다.
+            cells[10, 6] = '#';
+            cells[16, 8] = '#';
+            cells[22, 6] = '#';
+
+            var rows = new string[height];
+            for (int row = 0; row < height; row++)
+            {
+                int y = height - 1 - row;
+                var chars = new char[width];
+                for (int x = 0; x < width; x++) chars[x] = cells[x, y];
+                rows[row] = new string(chars);
+            }
+            return new AsciiMapV2("apartment-serial-aisle", rows);
+        }
+
         public static AsciiMapV2 ConstrainedApartmentVariant(int seed)
         {
             const int width = 20, height = 11;

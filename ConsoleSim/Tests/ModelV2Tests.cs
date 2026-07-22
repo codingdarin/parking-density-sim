@@ -40,7 +40,8 @@ namespace ParkingSim.Tests
             passed += Run("㉘ 정적 가지치기 — 시드2 해 보존·확장 상한", TestStaticReachabilityPruningRegression);
             passed += Run("㉙ 운송 유닛 일반화 — 1·2·4조 동적 타임라인", TestPipelinedRobotCountGeneralization);
             passed += Run("㉚ 운송 유닛 상한 — 8조가 차량8대에 각각 1임무", TestPipelinedEightRobots);
-            Console.WriteLine($"\nV2 타당성 게이트 {passed}/30 통과");
+            passed += Run("㉛ 다차량 아파트형 — 차량8·고정차22·8조 46틱", TestApartmentSerialAisle);
+            Console.WriteLine($"\nV2 타당성 게이트 {passed}/31 통과");
             return passed;
         }
 
@@ -500,6 +501,22 @@ namespace ParkingSim.Tests
             Assert(Enumerable.Range(0, 8).All(robot =>
                     result.Missions.Count(mission => mission.RobotIndex == robot) == 1),
                 "차량8대가 운송 유닛8조에 하나씩 배정되지 않음");
+        }
+
+        private static void TestApartmentSerialAisle()
+        {
+            EmergencyProblemV2 map = V2MapCatalog.ApartmentSerialAisle.Build();
+            var scenario = new EmergencyScenarioV2(
+                "serial-aisle-regression", (27, 7), map.CopyClearanceCells());
+            EmergencyScenarioBuildResultV2 built = scenario.Build(map);
+            Assert(built.Success && built.SelectedVehicleCount == 8, built.FailReason);
+            Assert(map.FixedVehiclePoses.Count == 22 && map.StagingCapacity == 8 &&
+                   map.RobotStarts.Count == 8,
+                "다차량 아파트형 고정차·적치면·대기소 수 불일치");
+            PipelinedPlanResultV2 result = PipelinedPrioritizedPlannerV2.Solve(
+                built.Problem, activeRobotCount: 8);
+            Assert(result.Success && result.PhysicallyValid && result.Ticks == 46,
+                "다차량 아파트형 8조 기준 46틱 불일치: " + result.FailReason);
         }
 
         private static int Run(string name, Action test)
