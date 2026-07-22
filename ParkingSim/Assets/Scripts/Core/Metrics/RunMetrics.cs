@@ -35,5 +35,10 @@ namespace ParkingSim.Core.Metrics
         public double EffectiveP { get; set; }    // 동시 가동 로봇 평균 (유효 병렬성 실측치)
         public double EnvelopeSeconds { get; set; } // 봉투 예측 (간섭 무시, p=RobotCount)
         public double DeviationRatio { get; set; }  // 실측 / 봉투 (>1 = 혼잡 손실)
+
+        // 유휴 분해 (로봇-틱 비율) — 병렬성 붕괴의 주범 진단
+        public double DriveWaitFrac { get; set; }   // 통로 혼잡
+        public double DropWaitFrac { get; set; }    // 하차 병목 (유예 창 직렬화)
+        public double IdleFrac { get; set; }        // 완전유휴 (미배정·완료 후)
     }
 }

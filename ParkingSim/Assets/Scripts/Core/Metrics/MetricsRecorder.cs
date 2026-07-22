@@ -62,6 +62,14 @@ namespace ParkingSim.Core.Metrics
             }
             m.DeviationRatio = m.EnvelopeSeconds > 0 ? m.ClearSeconds / m.EnvelopeSeconds : 0;
 
+            long tot = report.TotalRobotTicks;
+            if (tot > 0)
+            {
+                m.DriveWaitFrac = (double)report.DriveWaitTicks / tot;
+                m.DropWaitFrac = (double)report.DropWaitTicks / tot;
+                m.IdleFrac = (double)report.IdleTicks / tot;
+            }
+
             return m;
         }
     }

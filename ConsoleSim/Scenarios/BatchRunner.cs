@@ -36,7 +36,7 @@ namespace ParkingSim.Scenarios
 
             var rows = new List<RunMetrics>();
             foreach (var sc in scenarios)
-                rows.Add(Execute(sc));
+                rows.Add(Execute(sc.Lanes, sc.Fire, sc.Pockets, sc.Seed, sc.Robots));
 
             Directory.CreateDirectory("output");
             var sb = new StringBuilder();
@@ -50,18 +50,19 @@ namespace ParkingSim.Scenarios
             Console.WriteLine($"\n→ {path} ({rows.Count}행)");
         }
 
-        private static RunMetrics Execute(Scenario sc)
+        /// <summary>비상 1건 실행 → RunMetrics. 슬라이스 러너(D9SliceRunner)와 공유.
+        /// ClearanceEvaluator가 grid를 변형하므로 실행마다 새 Build.</summary>
+        public static RunMetrics Execute(int lanes, double fire, bool pockets, int seed, int robots)
         {
-            // ClearanceEvaluator가 grid를 변형하므로 실행마다 새 Build
             var lot = ParkingLayoutBuilder.Build(new LayoutConfig
             {
-                OccupiedLanes = sc.Lanes,
-                StagingPocketXs = sc.Pockets ? DemoPockets : new int[0],
+                OccupiedLanes = lanes,
+                StagingPocketXs = pockets ? DemoPockets : new int[0],
             });
-            var cfg = new EmergencyConfig { FireMeters = sc.Fire, RobotCount = sc.Robots };
+            var cfg = new EmergencyConfig { FireMeters = fire, RobotCount = robots };
             var plan = EmergencyPlanner.Plan(lot, cfg);
             var report = plan.Success ? ClearanceEvaluator.Evaluate(lot, plan) : null;
-            return MetricsRecorder.FromEmergency(lot, cfg, plan, report, sc.Seed);
+            return MetricsRecorder.FromEmergency(lot, cfg, plan, report, seed);
         }
 
         private static List<Scenario> DemoScenarios()
@@ -95,11 +96,11 @@ namespace ParkingSim.Scenarios
             return list;
         }
 
-        private static void PrintTable(List<RunMetrics> rows)
+        public static void PrintTable(List<RunMetrics> rows)
         {
             Console.WriteLine(
-                "레인  화재   포켓  로봇 | 확보(분)  판정  S필요  재시도 | 유효p  가동률 | 봉투(분)  이탈배율");
-            Console.WriteLine(new string('-', 88));
+                "레인  화재   포켓  로봇 | 확보(분)  판정  S필요  재시도 | 유효p  가동률 | 주행D 하차D 유휴 | 봉투(분) 이탈");
+            Console.WriteLine(new string('-', 104));
             foreach (var m in rows)
             {
                 string verdict = !m.Success ? "실패" : (m.WithinBudget ? "✅" : "❌");
@@ -107,7 +108,8 @@ namespace ParkingSim.Scenarios
                 Console.WriteLine(
                     $"{m.OccupiedLanes,3}  {m.FireMeters,5:0}m  {(m.PocketCount > 0 ? "有" : "無"),3}  {m.RobotCount,3}대 |" +
                     $"{clear}  {verdict,-4} {m.SectionCarCount,4}대 {m.Attempts,5}회 |" +
-                    $"{m.EffectiveP,6:0.00} {m.Utilization,6:0.0%} |{m.EnvelopeSeconds / 60,7:0.0}  {m.DeviationRatio,6:0.00}x");
+                    $"{m.EffectiveP,6:0.00} {m.Utilization,6:0.0%} |{m.DriveWaitFrac,5:0.0%}{m.DropWaitFrac,5:0.0%}{m.IdleFrac,5:0.0%} |" +
+                    $"{m.EnvelopeSeconds / 60,7:0.0} {m.DeviationRatio,5:0.00}x");
             }
         }
     }
