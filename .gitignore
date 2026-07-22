@@ -30,6 +30,7 @@ ConsoleSim/obj/
 
 # ===== 실험 산출물 (재생성 가능 — batch/normal 명령으로) =====
 output/*.csv
+output/*.md
 
 # ===== IDE =====
 .idea/
