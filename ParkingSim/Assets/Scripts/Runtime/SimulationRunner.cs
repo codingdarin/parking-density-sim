@@ -1,13 +1,13 @@
 using System.Collections.Generic;
+using System.Linq;
 using ParkingSim.Core.V2;
 using UnityEngine;
 
 namespace ParkingSim.Runtime
 {
     /// <summary>
-    /// Model V2 최소 통합 검증기.
-    /// 인스펙터 연결 없이 실제 소형 주차 블록과 exact 상태 타임라인을 생성해 재생한다.
-    /// 차량은 lift 뒤에도 사라지지 않고 AGV 위에서 이동한 뒤 유한 적치면을 계속 점유한다.
+    /// Model V2 운영 후보 Unity 재생기.
+    /// 강화 아파트형 맵과 화재 시나리오를 코드로 생성하고, pipeline 결과를 그대로 재생한다.
     /// </summary>
     public sealed class SimulationRunner : MonoBehaviour
     {
@@ -15,18 +15,20 @@ namespace ParkingSim.Runtime
         private static void Bootstrap()
         {
             if (Object.FindAnyObjectByType<SimulationRunner>() != null) return;
-            var go = new GameObject("ModelV2-SimBootstrap");
-            go.AddComponent<SimulationRunner>();
+            var gameObject = new GameObject("ModelV2-SimBootstrap");
+            gameObject.AddComponent<SimulationRunner>();
         }
 
-        private const float SecondsPerTick = 0.35f;
-        private const float EndHoldTicks = 4f;
-        private static readonly AsciiMapV2 ActiveMap = V2MapCatalog.SmallParkingBlock;
-        private const string ActiveScenarioName = "full-clearance-demo";
+        private const float SecondsPerTick = 0.32f;
+        private const float EndHoldTicks = 5f;
+        private static readonly AsciiMapV2 ActiveMap = V2MapCatalog.ApartmentConstrainedPrototype;
+        private const string ActiveScenarioName = "apartment-constrained-clearance";
 
         private EmergencyProblemV2 _problem;
-        private ExactEmergencyResultV2 _plan;
+        private PipelinedPlanResultV2 _plan;
         private readonly Dictionary<int, GameObject> _carViews = new Dictionary<int, GameObject>();
+        private readonly Dictionary<int, PipelinedMissionV2> _missions =
+            new Dictionary<int, PipelinedMissionV2>();
         private GameObject[] _robotViews;
         private float _time;
 
@@ -35,7 +37,7 @@ namespace ParkingSim.Runtime
             EmergencyProblemV2 map = ActiveMap.Build();
             var scenario = new EmergencyScenarioV2(
                 ActiveScenarioName,
-                fireCell: (11, 4),
+                fireCell: (19, 5),
                 requiredClearanceCells: map.CopyClearanceCells());
             EmergencyScenarioBuildResultV2 built = scenario.Build(map);
             if (!built.Success)
@@ -44,79 +46,88 @@ namespace ParkingSim.Runtime
                 enabled = false;
                 return;
             }
-            _problem = built.Problem;
-            _plan = ExactEmergencySolverV2.SolveWeighted(
-                _problem,
-                heuristicWeight: 1,
-                maxExpansions: 1000000,
-                activeRobotCount: 2,
-                captureTimeline: true);
 
-            if (!_plan.Success || _plan.Timeline.Count == 0)
+            _problem = built.Problem;
+            _plan = PipelinedPrioritizedPlannerV2.Solve(_problem);
+            if (!_plan.Success || !_plan.PhysicallyValid)
             {
-                Debug.LogError("[Model V2] exact 계획 실패: " + _plan.FailReason);
+                Debug.LogError("[Model V2] pipeline 계획 실패: " + _plan.FailReason);
                 enabled = false;
                 return;
             }
+            foreach (PipelinedMissionV2 mission in _plan.Missions)
+                _missions.Add(mission.VehicleIndex, mission);
 
             BuildGrid();
             BuildFireMarker();
-            BuildCars(_plan.Timeline[0]);
+            BuildFixedCars();
+            BuildMovableCars();
             BuildRobots();
             SetupCamera();
-            ApplyFrame(_plan.Timeline[0], _plan.Timeline[0], 0f);
+            ApplyTick(0f);
 
             Debug.Log(
                 "[Model V2] map=" + ActiveMap.Name + ", scenario=" + ActiveScenarioName +
-                ", 2로봇·차량보존 재생 시작 — " +
-                _problem.Width + "x" + _problem.Height + ", " +
-                _plan.Ticks + "틱, 회전 " + _plan.RotationActions + "회, 확장 " +
+                ", pipeline 재생 시작 — " + _problem.Width + "x" + _problem.Height +
+                ", 이동차량=" + _problem.VehicleCount + ", 고정차량=" +
+                _problem.FixedVehiclePoses.Count + ", " + _plan.Ticks + "틱, 확장 " +
                 _plan.ExpandedStates + "상태");
         }
 
         private void Update()
         {
-            if (_plan == null || _plan.Timeline.Count == 0) return;
-
+            if (_plan == null) return;
             _time += Time.deltaTime;
-            float cycleTicks = _plan.Ticks + EndHoldTicks;
-            float timelineTick = (_time / SecondsPerTick) % cycleTicks;
-            if (timelineTick > _plan.Ticks) timelineTick = _plan.Ticks;
-
-            int aIndex = Mathf.Clamp(Mathf.FloorToInt(timelineTick), 0, _plan.Timeline.Count - 1);
-            int bIndex = Mathf.Min(aIndex + 1, _plan.Timeline.Count - 1);
-            float fraction = bIndex == aIndex ? 0f : timelineTick - aIndex;
-            ApplyFrame(_plan.Timeline[aIndex], _plan.Timeline[bIndex], fraction);
+            float cycle = _plan.Ticks + EndHoldTicks;
+            float tick = (_time / SecondsPerTick) % cycle;
+            ApplyTick(Mathf.Min(tick, _plan.Ticks));
         }
 
-        private void ApplyFrame(StateSnapshotV2 a, StateSnapshotV2 b, float fraction)
+        private void ApplyTick(float timelineTick)
         {
-            for (int i = 0; i < _robotViews.Length; i++)
+            int aTick = Mathf.Clamp(Mathf.FloorToInt(timelineTick), 0, _plan.Ticks);
+            int bTick = Mathf.Min(aTick + 1, _plan.Ticks);
+            float fraction = bTick == aTick ? 0f : timelineTick - aTick;
+
+            for (int robot = 0; robot < 2; robot++)
             {
-                RobotSnapshotV2 ra = a.Robots[i];
-                RobotSnapshotV2 rb = b.Robots[i];
-                _robotViews[i].transform.position = Vector3.Lerp(
-                    RobotPosition(ra), RobotPosition(rb), fraction);
-                bool carrying = ra.CarryVehicle >= 0 || rb.CarryVehicle >= 0;
-                bool servicing = ra.ServiceRemaining > 0 || rb.ServiceRemaining > 0;
-                SetColor(_robotViews[i], RobotColor(i, carrying, servicing));
+                TimedRobotStateV2 a = StateAt(_plan.RobotTimelines[robot], aTick);
+                TimedRobotStateV2 b = StateAt(_plan.RobotTimelines[robot], bTick);
+                _robotViews[robot].transform.position = Vector3.Lerp(
+                    RobotPosition(a), RobotPosition(b), fraction);
+                SetColor(_robotViews[robot], RobotColor(robot, a.Carrying || b.Carrying));
             }
 
-            for (int i = 0; i < a.Vehicles.Length; i++)
+            for (int vehicle = 0; vehicle < _problem.VehicleCount; vehicle++)
             {
-                VehicleSnapshotV2 va = a.Vehicles[i];
-                VehicleSnapshotV2 vb = FindVehicle(b, va.VehicleId);
-                GameObject view = _carViews[va.VehicleId];
+                VehicleVisualState a = VehicleAt(vehicle, aTick);
+                VehicleVisualState b = VehicleAt(vehicle, bTick);
+                GameObject view = _carViews[vehicle];
                 view.transform.position = Vector3.Lerp(
-                    VehiclePosition(va.Pose, va.Carried),
-                    VehiclePosition(vb.Pose, vb.Carried),
-                    fraction);
+                    VehiclePosition(a.Pose, a.Carried),
+                    VehiclePosition(b.Pose, b.Carried), fraction);
                 view.transform.rotation = Quaternion.Lerp(
-                    VehicleRotation(va.Pose), VehicleRotation(vb.Pose), fraction);
-                SetColor(view, va.Carried || vb.Carried
+                    VehicleRotation(a.Pose), VehicleRotation(b.Pose), fraction);
+                SetColor(view, a.Carried || b.Carried
                     ? new Color(1f, 0.55f, 0.08f)
-                    : VehicleColor(va.VehicleId));
+                    : MovableVehicleColor(vehicle));
             }
+        }
+
+        private VehicleVisualState VehicleAt(int vehicle, int tick)
+        {
+            PipelinedMissionV2 mission = _missions[vehicle];
+            if (tick < mission.LiftTick)
+                return new VehicleVisualState(
+                    _problem.Slots[_problem.InitialVehicleSlots[vehicle]].Pose, false);
+            if (tick < mission.DropTick)
+            {
+                TimedRobotStateV2 robot = StateAt(
+                    _plan.RobotTimelines[mission.RobotIndex], tick);
+                return new VehicleVisualState(
+                    new VehiclePose(robot.X, robot.Y, robot.Orientation), true);
+            }
+            return new VehicleVisualState(_problem.Slots[mission.DestinationSlot].Pose, false);
         }
 
         private void BuildGrid()
@@ -127,22 +138,11 @@ namespace ParkingSim.Runtime
                 {
                     var tile = GameObject.CreatePrimitive(PrimitiveType.Cube);
                     tile.name = "Cell-" + x + "-" + y;
-                    tile.transform.position = new Vector3(x, _problem.IsFloor(x, y) ? -0.08f : 0.04f, y);
-                    tile.transform.localScale = new Vector3(0.94f, _problem.IsFloor(x, y) ? 0.12f : 0.35f, 0.94f);
+                    bool floor = _problem.IsFloor(x, y);
+                    tile.transform.position = new Vector3(x, floor ? -0.08f : 0.04f, y);
+                    tile.transform.localScale = new Vector3(0.94f, floor ? 0.12f : 0.35f, 0.94f);
                     SetColor(tile, CellColor(x, y));
                 }
-            }
-        }
-
-        private void BuildCars(StateSnapshotV2 initial)
-        {
-            foreach (VehicleSnapshotV2 vehicle in initial.Vehicles)
-            {
-                var cube = GameObject.CreatePrimitive(PrimitiveType.Cube);
-                cube.name = "Vehicle-" + (vehicle.VehicleId + 1);
-                cube.transform.localScale = new Vector3(1.82f, 0.42f, 0.82f);
-                SetColor(cube, VehicleColor(vehicle.VehicleId));
-                _carViews.Add(vehicle.VehicleId, cube);
             }
         }
 
@@ -157,16 +157,47 @@ namespace ParkingSim.Runtime
             SetColor(fire, new Color(1f, 0.08f, 0.02f));
         }
 
+        private void BuildFixedCars()
+        {
+            for (int i = 0; i < _problem.FixedVehiclePoses.Count; i++)
+            {
+                VehiclePose pose = _problem.FixedVehiclePoses[i];
+                GameObject car = CreateCar("FixedVehicle-" + (i + 1), pose);
+                SetColor(car, new Color(0.42f, 0.44f, 0.48f));
+            }
+        }
+
+        private void BuildMovableCars()
+        {
+            for (int vehicle = 0; vehicle < _problem.VehicleCount; vehicle++)
+            {
+                VehiclePose pose = _problem.Slots[_problem.InitialVehicleSlots[vehicle]].Pose;
+                GameObject car = CreateCar("MovableVehicle-" + (vehicle + 1), pose);
+                SetColor(car, MovableVehicleColor(vehicle));
+                _carViews.Add(vehicle, car);
+            }
+        }
+
+        private static GameObject CreateCar(string name, VehiclePose pose)
+        {
+            var car = GameObject.CreatePrimitive(PrimitiveType.Cube);
+            car.name = name;
+            car.transform.localScale = new Vector3(1.82f, 0.42f, 0.82f);
+            car.transform.position = VehiclePosition(pose, false);
+            car.transform.rotation = VehicleRotation(pose);
+            return car;
+        }
+
         private void BuildRobots()
         {
             _robotViews = new GameObject[2];
-            for (int i = 0; i < _robotViews.Length; i++)
+            for (int robot = 0; robot < 2; robot++)
             {
                 var cube = GameObject.CreatePrimitive(PrimitiveType.Cube);
-                cube.name = "AGV-" + (i + 1);
+                cube.name = "TransportUnit-" + (robot + 1);
                 cube.transform.localScale = new Vector3(0.72f, 0.18f, 0.72f);
-                SetColor(cube, RobotColor(i, false, false));
-                _robotViews[i] = cube;
+                SetColor(cube, RobotColor(robot, false));
+                _robotViews[robot] = cube;
             }
         }
 
@@ -191,7 +222,7 @@ namespace ParkingSim.Runtime
             camera.clearFlags = CameraClearFlags.SolidColor;
             camera.backgroundColor = new Color(0.06f, 0.07f, 0.09f);
             camera.transform.position = new Vector3(
-                (_problem.Width - 1) / 2f, 30f, (_problem.Height - 1) / 2f);
+                (_problem.Width - 1) / 2f, 35f, (_problem.Height - 1) / 2f);
             camera.transform.rotation = Quaternion.Euler(90f, 0f, 0f);
             Debug.Log("[Model V2] camera=" + camera.name + ", orthoSize=" + size.ToString("0.0"));
         }
@@ -217,14 +248,14 @@ namespace ParkingSim.Runtime
             return false;
         }
 
-        private static VehicleSnapshotV2 FindVehicle(StateSnapshotV2 frame, int vehicleId)
+        private static TimedRobotStateV2 StateAt(List<TimedRobotStateV2> timeline, int tick)
         {
-            foreach (VehicleSnapshotV2 vehicle in frame.Vehicles)
-                if (vehicle.VehicleId == vehicleId) return vehicle;
-            return frame.Vehicles[0];
+            for (int i = timeline.Count - 1; i >= 0; i--)
+                if (timeline[i].Tick <= tick) return timeline[i];
+            return timeline[0];
         }
 
-        private static Vector3 RobotPosition(RobotSnapshotV2 robot)
+        private static Vector3 RobotPosition(TimedRobotStateV2 robot)
         {
             return new Vector3(robot.X, 0.20f, robot.Y);
         }
@@ -245,28 +276,38 @@ namespace ParkingSim.Runtime
                 : Quaternion.Euler(0f, 90f, 0f);
         }
 
-        private static Color VehicleColor(int vehicleId)
+        private static Color MovableVehicleColor(int vehicle)
         {
-            return vehicleId % 2 == 0
+            return vehicle % 2 == 0
                 ? new Color(0.90f, 0.22f, 0.20f)
                 : new Color(0.72f, 0.18f, 0.72f);
         }
 
-        private static Color RobotColor(int robotIndex, bool carrying, bool servicing)
+        private static Color RobotColor(int robot, bool carrying)
         {
-            if (servicing) return new Color(1f, 0.85f, 0.10f);
             if (carrying) return new Color(1f, 0.48f, 0.05f);
-            return robotIndex == 0
+            return robot == 0
                 ? new Color(0.10f, 0.62f, 0.95f)
                 : new Color(0.12f, 0.88f, 0.76f);
         }
 
-        /// <summary>Built-in(_Color)과 URP/Lit(_BaseColor) 양쪽에서 보이도록 설정.</summary>
         private static void SetColor(GameObject target, Color color)
         {
             Material material = target.GetComponent<Renderer>().material;
             material.color = color;
             if (material.HasProperty("_BaseColor")) material.SetColor("_BaseColor", color);
+        }
+
+        private readonly struct VehicleVisualState
+        {
+            public VehiclePose Pose { get; }
+            public bool Carried { get; }
+
+            public VehicleVisualState(VehiclePose pose, bool carried)
+            {
+                Pose = pose;
+                Carried = carried;
+            }
         }
     }
 }
