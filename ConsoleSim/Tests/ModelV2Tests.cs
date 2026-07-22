@@ -43,13 +43,22 @@ namespace ParkingSim.Tests
             passed += Run("㉛ 다차량 아파트형 — 차량8·고정차22·8조 46틱", TestApartmentSerialAisle);
             passed += Run("㉜ 운영 통로 팩토리 — 레인·거리별 차량 수와 유한 적치", TestCorridorScenarioFactory);
             passed += Run("㉝ 포켓 강건성 — 14개 오프셋20종 모두 7분 통과", TestPocketLayoutRobustness);
-            Console.WriteLine($"\nV2 타당성 게이트 {passed}/33 통과");
+            passed += Run("㉞ 핵심경로 — 최소 개통시간 경로 선택·전면 재배치 단축", TestEmergencyAccessRouteSelection);
+            passed += Run("㉟ 지상 아파트형 — 2경로 선택·법정 전용구역 비점유", TestSurfaceApartmentAccessSelection);
+            Console.WriteLine($"\nV2 타당성 게이트 {passed}/35 통과");
             return passed;
         }
 
         public static EmergencyProblemV2 TwoVehicleProblem(int stagingSlots = 2)
         {
             return V2ProblemFactory.LineProblem(vehicleCount: 2, stagingSlots: stagingSlots);
+        }
+
+        public static int RunEmergencyAccessGate()
+        {
+            int passed = Run("핵심경로 단독 게이트", TestEmergencyAccessRouteSelection);
+            passed += Run("지상 아파트형 단독 게이트", TestSurfaceApartmentAccessSelection);
+            return passed;
         }
 
         private static void TestFiniteCapacity()
@@ -560,6 +569,127 @@ namespace ParkingSim.Tests
                 Assert(result.Success && result.PhysicallyValid && result.Ticks <= 168,
                     $"포켓14 오프셋{offset} 7분 실패: {result.Ticks}틱 {result.FailReason}");
             }
+        }
+
+        private static void TestEmergencyAccessRouteSelection()
+        {
+            EmergencyProblemV2 problem = EmergencyAccessTestProblem();
+            EmergencyAccessRouteV2 lower = new EmergencyAccessRouteV2(
+                "lower-one-car", (1, 4), (12, 4), LowerAccessCells());
+            EmergencyAccessRouteV2 upper = new EmergencyAccessRouteV2(
+                "upper-two-cars", (1, 4), (12, 4), UpperAccessCells());
+            EmergencyAccessPlanResultV2 selected = EmergencyAccessPlannerV2.Solve(
+                problem, new[] { lower, upper }, activeRobotCount: 2);
+            Assert(selected.Success, selected.FailReason);
+            EmergencyAccessCandidateResultV2 lowerResult = selected.Candidates
+                .Single(candidate => candidate.Route.Name == lower.Name);
+            EmergencyAccessCandidateResultV2 upperResult = selected.Candidates
+                .Single(candidate => candidate.Route.Name == upper.Name);
+            Assert(lowerResult.Success && upperResult.Success,
+                "두 접근경로가 모두 물리 계획 가능해야 함: lower=" +
+                CandidateFailure(lowerResult) + ", upper=" + CandidateFailure(upperResult));
+            int expectedTicks = Math.Min(lowerResult.Plan.Ticks, upperResult.Plan.Ticks);
+            Assert(selected.Selected.Plan.Ticks == expectedTicks,
+                "선택기가 최소 개통시간이 아닌 경로를 선택함");
+
+            var fullCells = LowerAccessCells().Concat(UpperAccessCells()).Distinct().ToArray();
+            EmergencyScenarioBuildResultV2 full = new EmergencyScenarioV2(
+                "full-clearance-baseline", (12, 4), fullCells).Build(problem);
+            Assert(full.Success && full.SelectedVehicleCount == 3, full.FailReason);
+            PipelinedPlanResultV2 fullPlan = PipelinedPrioritizedPlannerV2.Solve(
+                full.Problem, activeRobotCount: 2, maxHighLevelCandidates: 8);
+            Assert(fullPlan.Success && fullPlan.PhysicallyValid, fullPlan.FailReason);
+            Assert(selected.Selected.Plan.Ticks * 10 <= fullPlan.Ticks * 7,
+                $"핵심경로 시간 단축이 30% 미만: {selected.Selected.Plan.Ticks}/{fullPlan.Ticks}틱");
+            Console.WriteLine(
+                $"   하부={lowerResult.Plan.Ticks}틱/1대, 상부={upperResult.Plan.Ticks}틱/2대, " +
+                $"선택={selected.Selected.Route.Name}, 전면={fullPlan.Ticks}틱/3대");
+        }
+
+        private static void TestSurfaceApartmentAccessSelection()
+        {
+            SurfaceApartmentScenarioV2 scenario = SurfaceApartmentScenarioFactoryV2.Build();
+            Assert(scenario.BaseProblem.FixedVehiclePoses.Count == 5 &&
+                   scenario.BaseProblem.VehicleCount == 5 &&
+                   scenario.BaseProblem.StagingCapacity == 5,
+                "지상 아파트형 차량·적치 수 불일치");
+            Assert(!scenario.BaseProblem.Slots.Any(slot =>
+                    slot.Kind == SlotKind.Blocking && slot.Pose.X >= 19),
+                "화재동 법정 전용구역 연결부에 차량이 배치됨");
+            EmergencyAccessPlanResultV2 selected = EmergencyAccessPlannerV2.Solve(
+                scenario.BaseProblem, scenario.Routes, activeRobotCount: 4);
+            Assert(selected.Success, selected.FailReason);
+            Assert(selected.Candidates.All(candidate => candidate.Success),
+                "지상 아파트형 접근 후보 중 물리 계획 실패");
+            EmergencyAccessCandidateResultV2 lower = selected.Candidates
+                .Single(candidate => candidate.Route.Name == "lower-direct");
+            EmergencyAccessCandidateResultV2 upper = selected.Candidates
+                .Single(candidate => candidate.Route.Name == "upper-detour");
+            Assert(lower.Scenario.SelectedVehicleCount == 3 &&
+                   upper.Scenario.SelectedVehicleCount == 2,
+                "지상 아파트형 후보별 방해차 수 불일치");
+
+            EmergencyScenarioBuildResultV2 full = new EmergencyScenarioV2(
+                "surface-full-baseline", (22, 5), scenario.FullClearanceCells)
+                .Build(scenario.BaseProblem);
+            Assert(full.Success && full.SelectedVehicleCount == 5, full.FailReason);
+            PipelinedPlanResultV2 fullPlan = PipelinedPrioritizedPlannerV2.Solve(
+                full.Problem, activeRobotCount: 4, maxHighLevelCandidates: 8);
+            Assert(fullPlan.Success && fullPlan.PhysicallyValid, fullPlan.FailReason);
+            Assert(selected.Selected.Plan.Ticks * 10 <= fullPlan.Ticks * 7,
+                $"지상 핵심경로 단축이 30% 미만: {selected.Selected.Plan.Ticks}/{fullPlan.Ticks}틱");
+            Console.WriteLine(
+                $"   하부={lower.Plan.Ticks}틱/3대, 상부={upper.Plan.Ticks}틱/2대, " +
+                $"선택={selected.Selected.Route.Name}, 전면={fullPlan.Ticks}틱/5대");
+        }
+
+        private static EmergencyProblemV2 EmergencyAccessTestProblem()
+        {
+            var slots = new List<ParkingSlotV2>
+            {
+                new ParkingSlotV2(0, SlotKind.Blocking,
+                    new VehiclePose(6, 3, VehicleOrientation.Horizontal)),
+                new ParkingSlotV2(1, SlotKind.Blocking,
+                    new VehiclePose(5, 6, VehicleOrientation.Horizontal)),
+                new ParkingSlotV2(2, SlotKind.Blocking,
+                    new VehiclePose(9, 6, VehicleOrientation.Horizontal)),
+                new ParkingSlotV2(3, SlotKind.Staging,
+                    new VehiclePose(2, 0, VehicleOrientation.Horizontal)),
+                new ParkingSlotV2(4, SlotKind.Staging,
+                    new VehiclePose(5, 0, VehicleOrientation.Horizontal)),
+                new ParkingSlotV2(5, SlotKind.Staging,
+                    new VehiclePose(8, 0, VehicleOrientation.Horizontal)),
+            };
+            return new EmergencyProblemV2(
+                14, 10, EmergencyProblemV2.FullFloor(14, 10),
+                slots, new[] { 0, 1, 2 }, new[] { (0, 1), (1, 1) },
+                Array.Empty<(int X, int Y)>());
+        }
+
+        private static string CandidateFailure(EmergencyAccessCandidateResultV2 candidate)
+        {
+            if (candidate.Scenario == null) return "scenario-null";
+            if (!candidate.Scenario.Success) return candidate.Scenario.FailReason;
+            if (candidate.Plan == null) return "plan-null";
+            return candidate.Plan.Success
+                ? candidate.Plan.Ticks + " ticks"
+                : candidate.Plan.FailReason;
+        }
+
+        private static IEnumerable<(int X, int Y)> LowerAccessCells()
+        {
+            for (int x = 1; x <= 12; x++)
+                for (int y = 2; y <= 4; y++) yield return (x, y);
+        }
+
+        private static IEnumerable<(int X, int Y)> UpperAccessCells()
+        {
+            for (int x = 1; x <= 12; x++)
+                for (int y = 5; y <= 7; y++) yield return (x, y);
+            for (int x = 1; x <= 3; x++)
+                for (int y = 2; y <= 4; y++) yield return (x, y);
+            for (int x = 11; x <= 12; x++)
+                for (int y = 2; y <= 4; y++) yield return (x, y);
         }
 
         private static int Run(string name, Action test)

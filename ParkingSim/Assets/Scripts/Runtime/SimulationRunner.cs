@@ -33,8 +33,9 @@ namespace ParkingSim.Runtime
         private GameObject[] _robotViews;
         private GameObject _visualRoot;
         private string _scenarioName;
-        private int _pocketCount;
-        private int _netAlpha;
+        private string _routeName;
+        private int _movedVehicleCount;
+        private int _additionalVehicleCount;
         private float _displayTick;
         private float _time;
 
@@ -45,29 +46,48 @@ namespace ParkingSim.Runtime
 
         private void LoadPreset(int preset)
         {
-            int pockets = preset == 0 ? 0 : 14;
-            int offset = preset == 0 ? 0 : 14;
-            string scenarioName = preset == 0
-                ? "기준안 — 포켓 없음"
-                : "강건안 — 포켓14·최악 오프셋";
-            EmergencyScenarioBuildResultV2 built =
-                CorridorScenarioFactoryV2.BuildEmergencyWithPockets(
-                    fireMeters: 100,
-                    pocketCount: pockets,
-                    pocketOffset: offset);
+            SurfaceApartmentScenarioV2 surface = SurfaceApartmentScenarioFactoryV2.Build();
+            EmergencyScenarioBuildResultV2 built;
+            PipelinedPlanResultV2 plan;
+            string scenarioName;
+            string routeName;
+            if (preset == 0)
+            {
+                scenarioName = "전면 재배치 기준선";
+                routeName = "두 접근로 전체";
+                built = new EmergencyScenarioV2(
+                    "unity-surface-full", (22, 5), surface.FullClearanceCells)
+                    .Build(surface.BaseProblem);
+                plan = built.Success
+                    ? PipelinedPrioritizedPlannerV2.Solve(
+                        built.Problem, activeRobotCount: 4, maxHighLevelCandidates: 8)
+                    : null;
+            }
+            else
+            {
+                scenarioName = "핵심경로 우선";
+                EmergencyAccessPlanResultV2 access = EmergencyAccessPlannerV2.Solve(
+                    surface.BaseProblem, surface.Routes,
+                    activeRobotCount: 4, maxHighLevelCandidates: 8);
+                if (!access.Success)
+                {
+                    Debug.LogError("[Model V2] 핵심경로 선택 실패: " + access.FailReason);
+                    return;
+                }
+                built = access.Selected.Scenario;
+                plan = access.Selected.Plan;
+                routeName = access.Selected.Route.Name;
+            }
             if (!built.Success)
             {
                 Debug.LogError("[Model V2] 시나리오 생성 실패: " + built.FailReason);
                 return;
             }
 
-            PipelinedPlanResultV2 plan = PipelinedPrioritizedPlannerV2.Solve(
-                built.Problem,
-                activeRobotCount: 4,
-                maxHighLevelCandidates: 8);
-            if (!plan.Success || !plan.PhysicallyValid)
+            if (plan == null || !plan.Success || !plan.PhysicallyValid)
             {
-                Debug.LogError("[Model V2] pipeline 계획 실패: " + plan.FailReason);
+                Debug.LogError("[Model V2] pipeline 계획 실패: " +
+                               (plan == null ? "계획 없음" : plan.FailReason));
                 return;
             }
 
@@ -78,8 +98,9 @@ namespace ParkingSim.Runtime
             _problem = built.Problem;
             _plan = plan;
             _scenarioName = scenarioName;
-            _pocketCount = pockets;
-            _netAlpha = 20 - pockets;
+            _routeName = routeName;
+            _movedVehicleCount = built.SelectedVehicleCount;
+            _additionalVehicleCount = surface.BaseProblem.VehicleCount;
             _time = 0f;
             foreach (PipelinedMissionV2 mission in _plan.Missions)
                 _missions.Add(mission.VehicleIndex, mission);
@@ -96,8 +117,8 @@ namespace ParkingSim.Runtime
                 "[Model V2] scenario=" + _scenarioName +
                 ", pipeline 재생 시작 — " + _problem.Width + "x" + _problem.Height +
                 ", 이동차량=" + _problem.VehicleCount + ", 고정차량=" +
-                _problem.FixedVehiclePoses.Count + ", 포켓=" + _pocketCount +
-                ", net alpha=" + _netAlpha + ", " +
+                _problem.FixedVehiclePoses.Count + ", 선택경로=" + _routeName +
+                ", 가변주차=" + _additionalVehicleCount + ", " +
                 _plan.RobotTimelines.Length + "조, " + _plan.Ticks + "틱/" +
                 (_plan.Ticks * 2.5f).ToString("0.0") + "초, 확장 " +
                 _plan.ExpandedStates + "상태");
@@ -359,13 +380,14 @@ namespace ParkingSim.Runtime
             GUI.Box(new Rect(12f, 12f, 350f, 118f), string.Empty);
             GUI.Label(new Rect(24f, 22f, 330f, 24f), "Model V2 — " + _scenarioName);
             GUI.Label(new Rect(24f, 46f, 330f, 24f),
-                "포켓 " + _pocketCount + "면 · net α +" + _netAlpha +
-                "대 · 로봇 " + _plan.RobotTimelines.Length + "조");
+                "경로 " + _routeName + " · 이동 " + _movedVehicleCount + "/" +
+                _additionalVehicleCount + "대 · 운송유닛 " +
+                _plan.RobotTimelines.Length + "조");
             GUI.Label(new Rect(24f, 70f, 330f, 24f),
                 "확보 " + _plan.Ticks + "틱 / " + (_plan.Ticks * 2.5f).ToString("0.0") +
-                "초 · 7분 " + (safe ? "통과" : "실패") +
+                "초(가정) · 7분 " + (safe ? "통과" : "실패") +
                 " · 재생 t=" + _displayTick.ToString("0.0"));
-            GUI.Label(new Rect(24f, 94f, 330f, 24f), "[1] 기준안  [2] 포켓14 강건안");
+            GUI.Label(new Rect(24f, 94f, 330f, 24f), "[1] 전면 재배치  [2] 핵심경로 우선");
         }
 
         private readonly struct VehicleVisualState
