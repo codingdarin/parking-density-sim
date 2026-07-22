@@ -133,19 +133,29 @@ namespace ParkingSim.Runtime
 
         private void SetupCamera()
         {
-            var cam = Camera.main;
+            // 씬의 실제 렌더 카메라를 직접 재사용 (Camera.main은 태그 의존이라 Unity 6에서 빗나감).
+            var cams = Object.FindObjectsByType<Camera>(FindObjectsSortMode.None);
+            Camera cam = cams.Length > 0 ? cams[0] : null;
+            for (int i = 1; i < cams.Length; i++) cams[i].gameObject.SetActive(false); // 렌더 주체 단일화
             if (cam == null)
             {
-                var camGo = new GameObject("Main Camera") { tag = "MainCamera" };
+                var camGo = new GameObject("SimCamera") { tag = "MainCamera" };
                 cam = camGo.AddComponent<Camera>();
+                camGo.AddComponent<AudioListener>();
             }
-            float cx = _lot.Grid.Width / 2f;
-            float cz = _lot.Grid.Height / 2f;
+
+            float w = _lot.Grid.Width, h = _lot.Grid.Height;
+            float aspect = cam.aspect > 0.01f ? cam.aspect : 16f / 9f;
+            float size = Mathf.Max(h / 2f, w / (2f * aspect)) + 1f; // 폭·높이 둘 다 프레임에 들어오게
             cam.orthographic = true;
-            cam.orthographicSize = Mathf.Max(_lot.Grid.Width, _lot.Grid.Height) / 2f + 1f;
-            cam.transform.position = new Vector3(cx, 30f, cz);
-            cam.transform.rotation = Quaternion.Euler(90f, 0f, 0f); // 위에서 XZ 내려다봄
+            cam.orthographicSize = size;
+            cam.nearClipPlane = 0.1f;
+            cam.farClipPlane = 200f;
+            cam.clearFlags = CameraClearFlags.SolidColor;
             cam.backgroundColor = new Color(0.12f, 0.12f, 0.14f);
+            cam.transform.position = new Vector3(w / 2f, 50f, h / 2f);
+            cam.transform.rotation = Quaternion.Euler(90f, 0f, 0f); // 위에서 XZ 내려다봄
+            Debug.Log($"[Sim] 카메라 '{cam.name}' (총 {cams.Length}대) size={size:0.0} aspect={aspect:0.00} pos={cam.transform.position}");
         }
 
         private static Color CellColor(CellType t)
