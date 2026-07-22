@@ -17,6 +17,7 @@ namespace ParkingSim.Core.V2
         public int[] FinalVehicleSlots { get; set; }
         public (int X, int Y)[] FinalRobotPositions { get; set; }
         public List<string> JointActions { get; } = new List<string>();
+        public List<StateSnapshotV2> Timeline { get; } = new List<StateSnapshotV2>();
         public int RotationActions => JointActions.Sum(a => CountToken(a, "rotate"));
 
         private static int CountToken(string text, string token)
@@ -29,6 +30,31 @@ namespace ParkingSim.Core.V2
             }
             return count;
         }
+    }
+
+    public sealed class RobotSnapshotV2
+    {
+        public int X { get; set; }
+        public int Y { get; set; }
+        public int CarryVehicle { get; set; }
+        public VehicleOrientation Orientation { get; set; }
+        public string ServicePhase { get; set; }
+        public int ServiceRemaining { get; set; }
+    }
+
+    public sealed class VehicleSnapshotV2
+    {
+        public int VehicleId { get; set; }
+        public bool Carried { get; set; }
+        public int SlotIndex { get; set; }
+        public VehiclePose Pose { get; set; }
+    }
+
+    public sealed class StateSnapshotV2
+    {
+        public int Tick { get; set; }
+        public RobotSnapshotV2[] Robots { get; set; }
+        public VehicleSnapshotV2[] Vehicles { get; set; }
     }
 
     /// <summary>
@@ -92,7 +118,8 @@ namespace ParkingSim.Core.V2
         }
 
         public static ExactEmergencyResultV2 Solve(
-            EmergencyProblemV2 problem, int maxExpansions = 500000, int activeRobotCount = 2)
+            EmergencyProblemV2 problem, int maxExpansions = 500000,
+            int activeRobotCount = 2, bool captureTimeline = false)
         {
             if (activeRobotCount < 1 || activeRobotCount > 2)
                 throw new ArgumentOutOfRangeException(nameof(activeRobotCount));
@@ -114,6 +141,7 @@ namespace ParkingSim.Core.V2
             var queue = new Queue<(State State, int Depth)>();
             var seen = new HashSet<string> { startKey };
             var parents = new Dictionary<string, Parent>();
+            var capturedStates = captureTimeline ? new Dictionary<string, State> { [startKey] = start } : null;
             queue.Enqueue((start, 0));
 
             while (queue.Count > 0 && result.ExpandedStates < maxExpansions)
@@ -132,6 +160,8 @@ namespace ParkingSim.Core.V2
                     result.FinalRobotPositions = current.Robots.Select(r => (r.X, r.Y)).ToArray();
                     result.FinalVehicleCount = current.VehicleSlots.Length;
                     Reconstruct(startKey, goalKey, parents, result.JointActions);
+                    if (captureTimeline)
+                        CaptureTimeline(problem, startKey, goalKey, parents, capturedStates, result.Timeline);
                     return result;
                 }
 
@@ -150,6 +180,7 @@ namespace ParkingSim.Core.V2
                             PreviousKey = Key(current),
                             JointAction = $"r1:{a0.Label} | r2:{a1.Label}",
                         };
+                        if (captureTimeline) capturedStates[key] = next;
                         queue.Enqueue((next, depth + 1));
                     }
                 }
@@ -170,12 +201,14 @@ namespace ParkingSim.Core.V2
         /// </summary>
         public static ExactEmergencyResultV2 SolveWeighted(
             EmergencyProblemV2 problem, int heuristicWeight = 1,
-            int maxExpansions = 200000, int activeRobotCount = 2)
+            int maxExpansions = 200000, int activeRobotCount = 2,
+            bool captureTimeline = false)
         {
             if (heuristicWeight < 1) throw new ArgumentOutOfRangeException(nameof(heuristicWeight));
             return SolveWeightedRatio(
                 problem, heuristicNumerator: heuristicWeight, heuristicDenominator: 1,
-                maxExpansions: maxExpansions, activeRobotCount: activeRobotCount);
+                maxExpansions: maxExpansions, activeRobotCount: activeRobotCount,
+                captureTimeline: captureTimeline);
         }
 
         /// <summary>
@@ -183,16 +216,18 @@ namespace ParkingSim.Core.V2
         /// 해를 반환하면 이 행동 모델의 최적 makespan 대비 10% 이내 상한을 갖는다.
         /// </summary>
         public static ExactEmergencyResultV2 SolveBounded10Percent(
-            EmergencyProblemV2 problem, int maxExpansions = 1000000, int activeRobotCount = 2)
+            EmergencyProblemV2 problem, int maxExpansions = 1000000,
+            int activeRobotCount = 2, bool captureTimeline = false)
         {
             return SolveWeightedRatio(
                 problem, heuristicNumerator: 11, heuristicDenominator: 10,
-                maxExpansions: maxExpansions, activeRobotCount: activeRobotCount);
+                maxExpansions: maxExpansions, activeRobotCount: activeRobotCount,
+                captureTimeline: captureTimeline);
         }
 
         private static ExactEmergencyResultV2 SolveWeightedRatio(
             EmergencyProblemV2 problem, int heuristicNumerator, int heuristicDenominator,
-            int maxExpansions, int activeRobotCount)
+            int maxExpansions, int activeRobotCount, bool captureTimeline)
         {
             if (heuristicNumerator < heuristicDenominator || heuristicDenominator < 1)
                 throw new ArgumentOutOfRangeException(nameof(heuristicNumerator));
@@ -217,6 +252,7 @@ namespace ParkingSim.Core.V2
             var open = new SearchHeap();
             var bestDepth = new Dictionary<string, int> { [startKey] = 0 };
             var parents = new Dictionary<string, Parent>();
+            var capturedStates = captureTimeline ? new Dictionary<string, State> { [startKey] = start } : null;
             open.Push(
                 (long)heuristicNumerator * Heuristic(problem, start, activeRobotCount), 0, start);
 
@@ -237,6 +273,8 @@ namespace ParkingSim.Core.V2
                     result.FinalRobotPositions = current.Robots.Select(r => (r.X, r.Y)).ToArray();
                     result.FinalVehicleCount = current.VehicleSlots.Length;
                     Reconstruct(startKey, currentKey, parents, result.JointActions);
+                    if (captureTimeline)
+                        CaptureTimeline(problem, startKey, currentKey, parents, capturedStates, result.Timeline);
                     return result;
                 }
 
@@ -257,6 +295,7 @@ namespace ParkingSim.Core.V2
                             PreviousKey = currentKey,
                             JointAction = $"r1:{a0.Label} | r2:{a1.Label}",
                         };
+                        if (captureTimeline) capturedStates[key] = next;
                         int h = Heuristic(problem, next, activeRobotCount);
                         long score = (long)heuristicDenominator * nextDepth +
                                      (long)heuristicNumerator * h;
@@ -628,6 +667,73 @@ namespace ParkingSim.Core.V2
             }
             reversed.Reverse();
             output.AddRange(reversed);
+        }
+
+        private static void CaptureTimeline(
+            EmergencyProblemV2 problem,
+            string startKey,
+            string goalKey,
+            Dictionary<string, Parent> parents,
+            Dictionary<string, State> capturedStates,
+            List<StateSnapshotV2> output)
+        {
+            var keys = new List<string> { goalKey };
+            string key = goalKey;
+            while (key != startKey && parents.TryGetValue(key, out var parent))
+            {
+                key = parent.PreviousKey;
+                keys.Add(key);
+            }
+            keys.Reverse();
+            for (int tick = 0; tick < keys.Count; tick++)
+                output.Add(ToSnapshot(problem, capturedStates[keys[tick]], tick));
+        }
+
+        private static StateSnapshotV2 ToSnapshot(EmergencyProblemV2 problem, State state, int tick)
+        {
+            var robots = new RobotSnapshotV2[2];
+            for (int r = 0; r < 2; r++)
+            {
+                var robot = state.Robots[r];
+                robots[r] = new RobotSnapshotV2
+                {
+                    X = robot.X,
+                    Y = robot.Y,
+                    CarryVehicle = robot.CarryVehicle,
+                    Orientation = robot.Orientation,
+                    ServicePhase = robot.Service.ToString(),
+                    ServiceRemaining = robot.ServiceRemaining,
+                };
+            }
+
+            var vehicles = new VehicleSnapshotV2[state.VehicleSlots.Length];
+            for (int v = 0; v < state.VehicleSlots.Length; v++)
+            {
+                int slot = state.VehicleSlots[v];
+                if (slot >= 0)
+                {
+                    vehicles[v] = new VehicleSnapshotV2
+                    {
+                        VehicleId = v,
+                        Carried = false,
+                        SlotIndex = slot,
+                        Pose = problem.Slots[slot].Pose,
+                    };
+                }
+                else
+                {
+                    int r = -1 - slot;
+                    var robot = state.Robots[r];
+                    vehicles[v] = new VehicleSnapshotV2
+                    {
+                        VehicleId = v,
+                        Carried = true,
+                        SlotIndex = -1,
+                        Pose = new VehiclePose(robot.X, robot.Y, robot.Orientation),
+                    };
+                }
+            }
+            return new StateSnapshotV2 { Tick = tick, Robots = robots, Vehicles = vehicles };
         }
 
         private sealed class SearchHeap

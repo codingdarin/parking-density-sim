@@ -25,7 +25,8 @@ namespace ParkingSim.Tests
             passed += Run("⑬ 시간 의미 분리 — 물리 하차시간≠예약 안전버퍼", TestTimingSeparation);
             passed += Run("⑭ 실제 블록 — 3셀 통로·벽·가로/세로 혼합 차량", TestParkingBlockGeometry);
             passed += Run("⑮ α↔N 회계 — 적치 전용비용 차감·용량부족 실패", TestCapacityTradeoff);
-            Console.WriteLine($"\nV2 타당성 게이트 {passed}/15 통과");
+            passed += Run("⑯ 상태 타임라인 — 매 틱 차량·로봇 pose 보존", TestTimelineCapture);
+            Console.WriteLine($"\nV2 타당성 게이트 {passed}/16 통과");
             return passed;
         }
 
@@ -261,6 +262,27 @@ namespace ParkingSim.Tests
                 "추가2/전용2 동일부지 회계 오류");
             Assert(!insufficient.Success && insufficient.FailReason.Contains("적치 용량 부족"),
                 "차량2/적치1 정책이 실패하지 않음");
+        }
+
+        private static void TestTimelineCapture()
+        {
+            var problem = V2ProblemFactory.ParkingBlockProblem();
+            var result = ExactEmergencySolverV2.SolveWeighted(
+                problem, heuristicWeight: 1, maxExpansions: 1000000,
+                captureTimeline: true);
+            Assert(result.Success, result.FailReason);
+            Assert(result.Timeline.Count == result.Ticks + 1,
+                "타임라인 길이가 0틱 초기상태+행동틱과 불일치");
+            foreach (var frame in result.Timeline)
+            {
+                Assert(frame.Robots.Length == 2, $"t={frame.Tick} 로봇 누락");
+                Assert(frame.Vehicles.Length == 2, $"t={frame.Tick} 차량 생성·소멸");
+                Assert(frame.Vehicles.Select(v => v.VehicleId).Distinct().Count() == 2,
+                    $"t={frame.Tick} 차량 ID 중복");
+            }
+            var final = result.Timeline[result.Timeline.Count - 1];
+            Assert(final.Vehicles.All(v => !v.Carried && v.SlotIndex >= 0),
+                "최종 프레임에 적재 중/무슬롯 차량이 남음");
         }
 
         private static int Run(string name, Action test)

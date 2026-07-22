@@ -30,7 +30,7 @@ namespace ParkingSim
                     Environment.ExitCode = Tests.AdversarialTests.RunSanityCheck() ? 0 : 1;
                     break;
                 case "v2test":
-                    Environment.ExitCode = Tests.ModelV2Tests.RunAll() == 15 ? 0 : 1;
+                    Environment.ExitCode = Tests.ModelV2Tests.RunAll() == 16 ? 0 : 1;
                     break;
                 case "v2scale":
                     Scenarios.V2ScaleDemo.Run(lanes > 1 ? lanes : 4);
