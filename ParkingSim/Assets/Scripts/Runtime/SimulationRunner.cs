@@ -2,6 +2,9 @@ using System.Collections.Generic;
 using System.Linq;
 using ParkingSim.Core.V2;
 using UnityEngine;
+#if ENABLE_INPUT_SYSTEM
+using UnityEngine.InputSystem;
+#endif
 
 namespace ParkingSim.Runtime
 {
@@ -102,13 +105,28 @@ namespace ParkingSim.Runtime
 
         private void Update()
         {
-            if (Input.GetKeyDown(KeyCode.Alpha1)) LoadPreset(0);
-            if (Input.GetKeyDown(KeyCode.Alpha2)) LoadPreset(1);
+            if (PresetKeyPressed(1)) LoadPreset(0);
+            if (PresetKeyPressed(2)) LoadPreset(1);
             if (_plan == null) return;
             _time += Time.deltaTime;
             float cycle = _plan.Ticks + EndHoldTicks;
             float tick = (_time / SecondsPerTick) % cycle;
             ApplyTick(Mathf.Min(tick, _plan.Ticks));
+        }
+
+        private static bool PresetKeyPressed(int preset)
+        {
+#if ENABLE_INPUT_SYSTEM
+            Keyboard keyboard = Keyboard.current;
+            if (keyboard == null) return false;
+            return preset == 1
+                ? keyboard.digit1Key.wasPressedThisFrame
+                : keyboard.digit2Key.wasPressedThisFrame;
+#elif ENABLE_LEGACY_INPUT_MANAGER
+            return Input.GetKeyDown(preset == 1 ? KeyCode.Alpha1 : KeyCode.Alpha2);
+#else
+            return false;
+#endif
         }
 
         private void ApplyTick(float timelineTick)
