@@ -128,6 +128,8 @@ namespace ParkingSim.Core.V2
 
             if (RobotStarts.Count != 2)
                 throw new ArgumentException("V2 정확해 오라클은 우선 로봇 2대만 지원");
+            if (RobotStarts.Distinct().Count() != RobotStarts.Count)
+                throw new ArgumentException("로봇 시작점은 서로 달라야 함");
             if (InitialVehicleSlots.Distinct().Count() != InitialVehicleSlots.Count)
                 throw new ArgumentException("초기 차량은 서로 다른 슬롯에 있어야 함");
             foreach (int slot in InitialVehicleSlots)
@@ -146,6 +148,22 @@ namespace ParkingSim.Core.V2
             foreach (var pose in FixedVehiclePoses)
                 if (!PoseFits(pose))
                     throw new ArgumentException("고정 차량 풋프린트가 floor 밖임");
+
+            var slotCells = new HashSet<(int X, int Y)>();
+            foreach (var slot in Slots)
+                foreach (var cell in PoseCells(slot.Pose)) slotCells.Add(cell);
+            var fixedCells = new HashSet<(int X, int Y)>();
+            foreach (var pose in FixedVehiclePoses)
+            {
+                foreach (var cell in PoseCells(pose))
+                {
+                    if (slotCells.Contains(cell))
+                        throw new ArgumentException("고정 차량과 작업 슬롯의 풋프린트가 겹침");
+                    if (!fixedCells.Add(cell))
+                        throw new ArgumentException("고정 차량끼리 풋프린트가 겹침");
+                }
+            }
+
         }
 
         public bool IsFloor(int x, int y) =>

@@ -21,6 +21,7 @@ namespace ParkingSim.Runtime
 
         private const float SecondsPerTick = 0.35f;
         private const float EndHoldTicks = 4f;
+        private static readonly AsciiMapV2 ActiveMap = V2MapCatalog.SmallParkingBlock;
 
         private EmergencyProblemV2 _problem;
         private ExactEmergencyResultV2 _plan;
@@ -30,7 +31,7 @@ namespace ParkingSim.Runtime
 
         private void Start()
         {
-            _problem = V2ProblemFactory.ParkingBlockProblem();
+            _problem = ActiveMap.Build();
             _plan = ExactEmergencySolverV2.SolveWeighted(
                 _problem,
                 heuristicWeight: 1,
@@ -52,7 +53,7 @@ namespace ParkingSim.Runtime
             ApplyFrame(_plan.Timeline[0], _plan.Timeline[0], 0f);
 
             Debug.Log(
-                "[Model V2] 2로봇·차량보존 재생 시작 — " +
+                "[Model V2] map=" + ActiveMap.Name + ", 2로봇·차량보존 재생 시작 — " +
                 _problem.Width + "x" + _problem.Height + ", " +
                 _plan.Ticks + "틱, 회전 " + _plan.RotationActions + "회, 확장 " +
                 _plan.ExpandedStates + "상태");

@@ -26,7 +26,10 @@ namespace ParkingSim.Tests
             passed += Run("⑭ 실제 블록 — 3셀 통로·벽·가로/세로 혼합 차량", TestParkingBlockGeometry);
             passed += Run("⑮ α↔N 회계 — 적치 전용비용 차감·용량부족 실패", TestCapacityTradeoff);
             passed += Run("⑯ 상태 타임라인 — 매 틱 차량·로봇 pose 보존", TestTimelineCapture);
-            Console.WriteLine($"\nV2 타당성 게이트 {passed}/16 통과");
+            passed += Run("⑰ ASCII 맵 — 기존 소형 블록 exact 결과 재현", TestAsciiMapReproducesBlock);
+            passed += Run("⑱ 대표 기하 — L/T/아파트형 맵 불변조건 통과", TestMapCatalogGeometry);
+            passed += Run("⑲ 맵 방어 — 경계 밖 차량 풋프린트 거부", TestInvalidMapRejected);
+            Console.WriteLine($"\nV2 타당성 게이트 {passed}/19 통과");
             return passed;
         }
 
@@ -283,6 +286,51 @@ namespace ParkingSim.Tests
             var final = result.Timeline[result.Timeline.Count - 1];
             Assert(final.Vehicles.All(v => !v.Carried && v.SlotIndex >= 0),
                 "최종 프레임에 적재 중/무슬롯 차량이 남음");
+        }
+
+        private static void TestAsciiMapReproducesBlock()
+        {
+            var problem = V2MapCatalog.SmallParkingBlock.Build();
+            var result = ExactEmergencySolverV2.SolveWeighted(
+                problem, heuristicWeight: 1, maxExpansions: 1000000);
+            Assert(problem.Width == 12 && problem.Height == 6, "소형 블록 크기 불일치");
+            Assert(problem.VehicleCount == 2 && problem.StagingCapacity == 2,
+                "ASCII 슬롯/차량 파싱 오류");
+            Assert(result.Success && result.Ticks == 19,
+                "기존 소형 블록 exact 19틱을 재현하지 못함");
+        }
+
+        private static void TestMapCatalogGeometry()
+        {
+            var lTurn = V2MapCatalog.LTurn.Build();
+            var tJunction = V2MapCatalog.TJunction.Build();
+            var apartment = V2MapCatalog.ApartmentAislePrototype.Build();
+
+            Assert(lTurn.Width == 7 && lTurn.Height == 7 && lTurn.IsFloor(6, 0),
+                "L자 통로 파싱 오류");
+            Assert(tJunction.Width == 9 && tJunction.Height == 7 &&
+                   tJunction.IsFloor(0, 6) && !tJunction.IsFloor(0, 0),
+                "T자 통로 파싱 오류");
+            Assert(apartment.Width == 18 && apartment.Height == 9,
+                "아파트형 프로토타입 크기 불일치");
+            Assert(apartment.VehicleCount == 2 && apartment.StagingCapacity == 2,
+                "아파트형 작업 차량/적치면 파싱 오류");
+            Assert(apartment.FixedVehiclePoses.Count == 16,
+                "아파트형 고정 주차차량 수 불일치");
+        }
+
+        private static void TestInvalidMapRejected()
+        {
+            bool rejected = false;
+            try
+            {
+                new AsciiMapV2("invalid-footprint", "12", ".>").Build();
+            }
+            catch (ArgumentException)
+            {
+                rejected = true;
+            }
+            Assert(rejected, "맵 경계 밖 1×2 차량을 허용함");
         }
 
         private static int Run(string name, Action test)

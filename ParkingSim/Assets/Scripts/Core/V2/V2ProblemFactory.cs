@@ -47,6 +47,8 @@ namespace ParkingSim.Core.V2
                 throw new ArgumentOutOfRangeException(nameof(blockingVehicles));
             if (stagingSlots < 0 || stagingSlots > 2)
                 throw new ArgumentOutOfRangeException(nameof(stagingSlots));
+            if (blockingVehicles == 2 && stagingSlots == 2)
+                return V2MapCatalog.SmallParkingBlock.Build(timing);
             const int width = 12, height = 6;
             var floor = new bool[width, height];
             for (int x = 0; x < width; x++)
