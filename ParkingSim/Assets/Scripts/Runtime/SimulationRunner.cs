@@ -7,7 +7,7 @@ namespace ParkingSim.Runtime
 {
     /// <summary>
     /// Model V2 운영 후보 Unity 재생기.
-    /// 강화 아파트형 맵과 화재 시나리오를 코드로 생성하고, pipeline 결과를 그대로 재생한다.
+    /// 운영 규모 통로와 화재 시나리오를 코드로 생성하고, pipeline 결과를 그대로 재생한다.
     /// </summary>
     public sealed class SimulationRunner : MonoBehaviour
     {
@@ -21,8 +21,7 @@ namespace ParkingSim.Runtime
 
         private const float SecondsPerTick = 0.32f;
         private const float EndHoldTicks = 5f;
-        private static readonly AsciiMapV2 ActiveMap = V2MapCatalog.ApartmentSerialAisle;
-        private const string ActiveScenarioName = "apartment-serial-full-clearance";
+        private const string ActiveScenarioName = "corridor-l1-d100-p14-o14";
 
         private EmergencyProblemV2 _problem;
         private PipelinedPlanResultV2 _plan;
@@ -34,12 +33,11 @@ namespace ParkingSim.Runtime
 
         private void Start()
         {
-            EmergencyProblemV2 map = ActiveMap.Build();
-            var scenario = new EmergencyScenarioV2(
-                ActiveScenarioName,
-                fireCell: (27, 7),
-                requiredClearanceCells: map.CopyClearanceCells());
-            EmergencyScenarioBuildResultV2 built = scenario.Build(map);
+            EmergencyScenarioBuildResultV2 built =
+                CorridorScenarioFactoryV2.BuildEmergencyWithPockets(
+                    fireMeters: 100,
+                    pocketCount: 14,
+                    pocketOffset: 14);
             if (!built.Success)
             {
                 Debug.LogError("[Model V2] 시나리오 생성 실패: " + built.FailReason);
@@ -48,7 +46,10 @@ namespace ParkingSim.Runtime
             }
 
             _problem = built.Problem;
-            _plan = PipelinedPrioritizedPlannerV2.Solve(_problem);
+            _plan = PipelinedPrioritizedPlannerV2.Solve(
+                _problem,
+                activeRobotCount: 4,
+                maxHighLevelCandidates: 8);
             if (!_plan.Success || !_plan.PhysicallyValid)
             {
                 Debug.LogError("[Model V2] pipeline 계획 실패: " + _plan.FailReason);
@@ -67,10 +68,12 @@ namespace ParkingSim.Runtime
             ApplyTick(0f);
 
             Debug.Log(
-                "[Model V2] map=" + ActiveMap.Name + ", scenario=" + ActiveScenarioName +
+                "[Model V2] scenario=" + ActiveScenarioName +
                 ", pipeline 재생 시작 — " + _problem.Width + "x" + _problem.Height +
                 ", 이동차량=" + _problem.VehicleCount + ", 고정차량=" +
-                _problem.FixedVehiclePoses.Count + ", " + _plan.Ticks + "틱, 확장 " +
+                _problem.FixedVehiclePoses.Count + ", 포켓=14, net alpha=6, " +
+                _plan.RobotTimelines.Length + "조, " + _plan.Ticks + "틱/" +
+                (_plan.Ticks * 2.5f).ToString("0.0") + "초, 확장 " +
                 _plan.ExpandedStates + "상태");
         }
 
