@@ -32,7 +32,9 @@ namespace ParkingSim.Tests
             passed += Run("⑳ 화재 시나리오 — 전체 확보구간 exact 19틱 재현", TestEmergencyScenarioFullClearance);
             passed += Run("㉑ 선택 이동 — 확보구간과 겹친 차량만 작업 대상으로 선정", TestEmergencyScenarioSelectsBlockers);
             passed += Run("㉒ 구조 실패 — 고정 차량이 확보구간을 막으면 탐색 전 거부", TestEmergencyScenarioRejectsFixedObstruction);
-            Console.WriteLine($"\nV2 타당성 게이트 {passed}/22 통과");
+            passed += Run("㉓ 운영 후보 — 직선4대 exact 30틱·물리 유효 재현", TestPipelinedLineFour);
+            passed += Run("㉔ 대표 기하 — 혼합방향 소형 블록 exact 19틱 재현", TestPipelinedParkingBlock);
+            Console.WriteLine($"\nV2 타당성 게이트 {passed}/24 통과");
             return passed;
         }
 
@@ -380,6 +382,27 @@ namespace ParkingSim.Tests
                 "고정 차량이 확보구간을 막는데 문제를 생성함");
             Assert(built.FailReason.Contains("고정 차량"),
                 "구조 실패 원인을 고정 차량으로 보고하지 않음");
+        }
+
+        private static void TestPipelinedLineFour()
+        {
+            PipelinedPlanResultV2 result = PipelinedPrioritizedPlannerV2.Solve(
+                V2ProblemFactory.LineProblem(4));
+            Assert(result.Success && result.PhysicallyValid, result.FailReason);
+            Assert(result.Ticks == 30, "직선4대 exact 기준 30틱 불일치");
+            Assert(result.Missions.Count == 4, "차량4대 미션 누락");
+            Assert(result.FinalVehicleSlots.Distinct().Count() == 4,
+                "최종 유한 적치면 중복");
+        }
+
+        private static void TestPipelinedParkingBlock()
+        {
+            PipelinedPlanResultV2 result = PipelinedPrioritizedPlannerV2.Solve(
+                V2MapCatalog.SmallParkingBlock.Build());
+            Assert(result.Success && result.PhysicallyValid, result.FailReason);
+            Assert(result.Ticks == 19, "소형 혼합방향 블록 exact 기준 19틱 불일치");
+            Assert(result.FinalVehicleSlots.Distinct().Count() == 2,
+                "소형 블록 적치면 중복");
         }
 
         private static int Run(string name, Action test)

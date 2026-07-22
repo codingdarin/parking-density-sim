@@ -8,8 +8,57 @@ namespace ParkingSim.Scenarios
         public static void RunQualityGate()
         {
             PlannerQualityReportV2 report = PlannerQualityEvaluatorV2.EvaluateLineRolling();
-            Console.WriteLine("=== Model V2 운영 후보 품질 게이트: rolling(창3) vs 전역 exact ===");
-            Console.WriteLine("차량 | exact | rolling | 격차 | exact확장 | rolling확장 | 판정");
+            PrintQualityReport("rolling(창3)", report);
+        }
+
+        public static void RunPipelineQualityGate()
+        {
+            PlannerQualityReportV2 report = PlannerQualityEvaluatorV2.EvaluateLinePipelined();
+            PrintQualityReport("pipelined-prioritized", report);
+        }
+
+        public static void RunPipelineDetail(int vehicles)
+        {
+            if (vehicles < 2) vehicles = 2;
+            PipelinedPlanResultV2 result = PipelinedPrioritizedPlannerV2.Solve(
+                V2ProblemFactory.LineProblem(vehicles));
+            Console.WriteLine($"=== pipeline detail: 차량={vehicles}, 성공={result.Success}, " +
+                              $"makespan={result.Ticks}, 유효={result.PhysicallyValid}, 확장={result.ExpandedStates} ===");
+            foreach (PipelinedMissionV2 mission in result.Missions)
+                Console.WriteLine($"r{mission.RobotIndex + 1} v{mission.VehicleIndex + 1} → s{mission.DestinationSlot}: " +
+                                  $"start={mission.StartTick}, lift={mission.LiftTick}, drop={mission.DropTick}");
+            for (int r = 0; r < 2; r++)
+            {
+                TimedRobotStateV2 end = result.RobotTimelines[r][result.RobotTimelines[r].Count - 1];
+                Console.WriteLine($"r{r + 1} end=({end.X},{end.Y})@{end.Tick}");
+            }
+            if (!result.Success) Console.WriteLine("사유=" + result.FailReason);
+        }
+
+        public static void RunPipelineBlock()
+        {
+            EmergencyProblemV2 problem = V2MapCatalog.SmallParkingBlock.Build();
+            ExactEmergencyResultV2 exact = ExactEmergencySolverV2.SolveWeighted(
+                problem, 1, 1000000, 2);
+            PipelinedPlanResultV2 candidate = PipelinedPrioritizedPlannerV2.Solve(
+                V2MapCatalog.SmallParkingBlock.Build());
+            double gap = exact.Success && candidate.Success
+                ? 100.0 * (candidate.Ticks - exact.Ticks) / exact.Ticks
+                : double.NaN;
+            Console.WriteLine("=== small-parking-block: pipeline vs exact ===");
+            Console.WriteLine($"exact={exact.Success}/{exact.Ticks}틱/{exact.ExpandedStates:N0}상태");
+            Console.WriteLine($"pipeline={candidate.Success}/{candidate.Ticks}틱/" +
+                              $"{candidate.ExpandedStates:N0}상태/유효={candidate.PhysicallyValid}/gap={gap:F1}%");
+            foreach (PipelinedMissionV2 mission in candidate.Missions)
+                Console.WriteLine($"r{mission.RobotIndex + 1} v{mission.VehicleIndex + 1} → " +
+                                  $"s{mission.DestinationSlot}, lift={mission.LiftTick}, drop={mission.DropTick}");
+            if (!candidate.Success) Console.WriteLine("사유=" + candidate.FailReason);
+        }
+
+        private static void PrintQualityReport(string candidateName, PlannerQualityReportV2 report)
+        {
+            Console.WriteLine("=== Model V2 운영 후보 품질 게이트: " + candidateName + " vs 전역 exact ===");
+            Console.WriteLine("차량 | exact | 후보 | 격차 | exact확장 | 후보확장 | 판정");
             Console.WriteLine(new string('-', 78));
             foreach (PlannerQualityRowV2 row in report.Rows)
             {

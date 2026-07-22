@@ -30,6 +30,30 @@ namespace ParkingSim.Core.V2
     /// </summary>
     public static class PlannerQualityEvaluatorV2
     {
+        public static PlannerQualityReportV2 EvaluateLinePipelined(
+            int minVehicles = 2,
+            int maxVehicles = 4,
+            double tolerancePercent = 10.0,
+            int maxExpansions = 1000000)
+        {
+            if (minVehicles < 1 || maxVehicles < minVehicles)
+                throw new ArgumentOutOfRangeException(nameof(minVehicles));
+            var report = new PlannerQualityReportV2 { TolerancePercent = tolerancePercent };
+            for (int vehicles = minVehicles; vehicles <= maxVehicles; vehicles++)
+            {
+                ExactEmergencyResultV2 exact = ExactEmergencySolverV2.SolveWeighted(
+                    V2ProblemFactory.LineProblem(vehicles), 1, maxExpansions, 2);
+                PipelinedPlanResultV2 candidate = PipelinedPrioritizedPlannerV2.Solve(
+                    V2ProblemFactory.LineProblem(vehicles));
+                report.Rows.Add(CreateRow(
+                    vehicles, exact.Success, candidate.Success && candidate.PhysicallyValid,
+                    exact.Ticks, candidate.Ticks,
+                    exact.ExpandedStates, candidate.ExpandedStates,
+                    tolerancePercent, candidate.FailReason));
+            }
+            return report;
+        }
+
         public static PlannerQualityReportV2 EvaluateLineRolling(
             int minVehicles = 2,
             int maxVehicles = 4,
@@ -55,36 +79,49 @@ namespace ParkingSim.Core.V2
                     batchSize: rollingBatchSize,
                     maxExpansionsPerBatch: maxExpansions);
 
-                var row = new PlannerQualityRowV2
-                {
-                    VehicleCount = vehicles,
-                    ExactSuccess = exact.Success,
-                    CandidateSuccess = candidate.Success,
-                    ExactTicks = exact.Ticks,
-                    CandidateTicks = candidate.TotalTicks,
-                    ExactExpandedStates = exact.ExpandedStates,
-                    CandidateExpandedStates = candidate.ExpandedStates,
-                };
-                if (!exact.Success)
-                {
-                    row.FailReason = "exact 오라클 실패: " + exact.FailReason;
-                }
-                else if (!candidate.Success)
-                {
-                    row.FailReason = "후보 플래너 실패: " + candidate.FailReason;
-                }
-                else
-                {
-                    row.GapPercent = exact.Ticks == 0
-                        ? (candidate.TotalTicks == 0 ? 0 : double.PositiveInfinity)
-                        : 100.0 * (candidate.TotalTicks - exact.Ticks) / exact.Ticks;
-                    row.WithinTolerance = row.GapPercent <= tolerancePercent;
-                    if (!row.WithinTolerance)
-                        row.FailReason = $"makespan 격차 {row.GapPercent:F1}% > {tolerancePercent:F1}%";
-                }
+                var row = CreateRow(
+                    vehicles, exact.Success, candidate.Success,
+                    exact.Ticks, candidate.TotalTicks,
+                    exact.ExpandedStates, candidate.ExpandedStates,
+                    tolerancePercent, candidate.FailReason);
                 report.Rows.Add(row);
             }
             return report;
+        }
+
+        private static PlannerQualityRowV2 CreateRow(
+            int vehicles,
+            bool exactSuccess,
+            bool candidateSuccess,
+            int exactTicks,
+            int candidateTicks,
+            int exactExpanded,
+            int candidateExpanded,
+            double tolerancePercent,
+            string candidateFailure)
+        {
+            var row = new PlannerQualityRowV2
+            {
+                VehicleCount = vehicles,
+                ExactSuccess = exactSuccess,
+                CandidateSuccess = candidateSuccess,
+                ExactTicks = exactTicks,
+                CandidateTicks = candidateTicks,
+                ExactExpandedStates = exactExpanded,
+                CandidateExpandedStates = candidateExpanded,
+            };
+            if (!exactSuccess) row.FailReason = "exact 오라클 실패";
+            else if (!candidateSuccess) row.FailReason = "후보 플래너 실패: " + candidateFailure;
+            else
+            {
+                row.GapPercent = exactTicks == 0
+                    ? (candidateTicks == 0 ? 0 : double.PositiveInfinity)
+                    : 100.0 * (candidateTicks - exactTicks) / exactTicks;
+                row.WithinTolerance = row.GapPercent <= tolerancePercent;
+                if (!row.WithinTolerance)
+                    row.FailReason = $"makespan 격차 {row.GapPercent:F1}% > {tolerancePercent:F1}%";
+            }
+            return row;
         }
     }
 }
