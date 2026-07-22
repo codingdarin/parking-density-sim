@@ -24,7 +24,8 @@ namespace ParkingSim.Tests
             passed += Run("⑫ rolling 확장 — 차량6대·유한 슬롯6면 보존", TestRollingSixVehicles);
             passed += Run("⑬ 시간 의미 분리 — 물리 하차시간≠예약 안전버퍼", TestTimingSeparation);
             passed += Run("⑭ 실제 블록 — 3셀 통로·벽·가로/세로 혼합 차량", TestParkingBlockGeometry);
-            Console.WriteLine($"\nV2 타당성 게이트 {passed}/14 통과");
+            passed += Run("⑮ α↔N 회계 — 적치 전용비용 차감·용량부족 실패", TestCapacityTradeoff);
+            Console.WriteLine($"\nV2 타당성 게이트 {passed}/15 통과");
             return passed;
         }
 
@@ -235,6 +236,31 @@ namespace ParkingSim.Tests
             Console.WriteLine(
                 $"   parking-block: {result.Ticks}틱, 회전={result.RotationActions}, " +
                 $"확장={result.ExpandedStates:N0}");
+        }
+
+        private static void TestCapacityTradeoff()
+        {
+            var baseline = CapacityTradeoffV2.EvaluateExact(
+                V2ProblemFactory.ParkingBlockProblem(0, 0), 0);
+            var oneParkingLand = CapacityTradeoffV2.EvaluateExact(
+                V2ProblemFactory.ParkingBlockProblem(1, 1), 1);
+            var oneNonParking = CapacityTradeoffV2.EvaluateExact(
+                V2ProblemFactory.ParkingBlockProblem(1, 1), 0);
+            var twoParkingLand = CapacityTradeoffV2.EvaluateExact(
+                V2ProblemFactory.ParkingBlockProblem(2, 2), 2);
+            var insufficient = CapacityTradeoffV2.EvaluateExact(
+                V2ProblemFactory.ParkingBlockProblem(2, 1), 1);
+
+            Assert(baseline.Success && baseline.ClearanceTicks == 0 && baseline.NetAlpha == 0,
+                "기준안이 0틱/α0이 아님");
+            Assert(oneParkingLand.Success && oneParkingLand.NetAlpha == 0,
+                "주차면 1개 전용 비용이 α에서 차감되지 않음");
+            Assert(oneNonParking.Success && oneNonParking.NetAlpha == 1,
+                "비주차 포장 적치의 순α 계산 오류");
+            Assert(twoParkingLand.Success && twoParkingLand.NetAlpha == 0,
+                "추가2/전용2 동일부지 회계 오류");
+            Assert(!insufficient.Success && insufficient.FailReason.Contains("적치 용량 부족"),
+                "차량2/적치1 정책이 실패하지 않음");
         }
 
         private static int Run(string name, Action test)
