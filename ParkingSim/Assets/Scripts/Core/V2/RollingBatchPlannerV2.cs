@@ -137,9 +137,10 @@ namespace ParkingSim.Core.V2
                 subSlots,
                 Enumerable.Range(0, batchVehicles.Count),
                 robotStarts,
-                clearanceCells: new (int X, int Y)[0],
+                clearanceCells: fullProblem.CopyClearanceCells(),
                 fixedVehiclePoses: fixedVehicles,
-                timing: fullProblem.Timing);
+                timing: fullProblem.Timing,
+                fireCell: fullProblem.FireCell);
         }
     }
 }

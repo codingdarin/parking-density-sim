@@ -22,6 +22,7 @@ namespace ParkingSim.Runtime
         private const float SecondsPerTick = 0.35f;
         private const float EndHoldTicks = 4f;
         private static readonly AsciiMapV2 ActiveMap = V2MapCatalog.SmallParkingBlock;
+        private const string ActiveScenarioName = "full-clearance-demo";
 
         private EmergencyProblemV2 _problem;
         private ExactEmergencyResultV2 _plan;
@@ -31,7 +32,19 @@ namespace ParkingSim.Runtime
 
         private void Start()
         {
-            _problem = ActiveMap.Build();
+            EmergencyProblemV2 map = ActiveMap.Build();
+            var scenario = new EmergencyScenarioV2(
+                ActiveScenarioName,
+                fireCell: (11, 4),
+                requiredClearanceCells: map.CopyClearanceCells());
+            EmergencyScenarioBuildResultV2 built = scenario.Build(map);
+            if (!built.Success)
+            {
+                Debug.LogError("[Model V2] 시나리오 생성 실패: " + built.FailReason);
+                enabled = false;
+                return;
+            }
+            _problem = built.Problem;
             _plan = ExactEmergencySolverV2.SolveWeighted(
                 _problem,
                 heuristicWeight: 1,
@@ -47,13 +60,15 @@ namespace ParkingSim.Runtime
             }
 
             BuildGrid();
+            BuildFireMarker();
             BuildCars(_plan.Timeline[0]);
             BuildRobots();
             SetupCamera();
             ApplyFrame(_plan.Timeline[0], _plan.Timeline[0], 0f);
 
             Debug.Log(
-                "[Model V2] map=" + ActiveMap.Name + ", 2로봇·차량보존 재생 시작 — " +
+                "[Model V2] map=" + ActiveMap.Name + ", scenario=" + ActiveScenarioName +
+                ", 2로봇·차량보존 재생 시작 — " +
                 _problem.Width + "x" + _problem.Height + ", " +
                 _plan.Ticks + "틱, 회전 " + _plan.RotationActions + "회, 확장 " +
                 _plan.ExpandedStates + "상태");
@@ -129,6 +144,17 @@ namespace ParkingSim.Runtime
                 SetColor(cube, VehicleColor(vehicle.VehicleId));
                 _carViews.Add(vehicle.VehicleId, cube);
             }
+        }
+
+        private void BuildFireMarker()
+        {
+            if (!_problem.FireCell.HasValue) return;
+            var fire = GameObject.CreatePrimitive(PrimitiveType.Cylinder);
+            fire.name = "Fire-Origin";
+            fire.transform.position = new Vector3(
+                _problem.FireCell.Value.X, 0.05f, _problem.FireCell.Value.Y);
+            fire.transform.localScale = new Vector3(0.28f, 0.05f, 0.28f);
+            SetColor(fire, new Color(1f, 0.08f, 0.02f));
         }
 
         private void BuildRobots()

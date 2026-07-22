@@ -29,7 +29,10 @@ namespace ParkingSim.Tests
             passed += Run("⑰ ASCII 맵 — 기존 소형 블록 exact 결과 재현", TestAsciiMapReproducesBlock);
             passed += Run("⑱ 대표 기하 — L/T/아파트형 맵 불변조건 통과", TestMapCatalogGeometry);
             passed += Run("⑲ 맵 방어 — 경계 밖 차량 풋프린트 거부", TestInvalidMapRejected);
-            Console.WriteLine($"\nV2 타당성 게이트 {passed}/19 통과");
+            passed += Run("⑳ 화재 시나리오 — 전체 확보구간 exact 19틱 재현", TestEmergencyScenarioFullClearance);
+            passed += Run("㉑ 선택 이동 — 확보구간과 겹친 차량만 작업 대상으로 선정", TestEmergencyScenarioSelectsBlockers);
+            passed += Run("㉒ 구조 실패 — 고정 차량이 확보구간을 막으면 탐색 전 거부", TestEmergencyScenarioRejectsFixedObstruction);
+            Console.WriteLine($"\nV2 타당성 게이트 {passed}/22 통과");
             return passed;
         }
 
@@ -331,6 +334,52 @@ namespace ParkingSim.Tests
                 rejected = true;
             }
             Assert(rejected, "맵 경계 밖 1×2 차량을 허용함");
+        }
+
+        private static void TestEmergencyScenarioFullClearance()
+        {
+            var map = V2MapCatalog.SmallParkingBlock.Build();
+            var scenario = new EmergencyScenarioV2(
+                "full-clearance",
+                fireCell: (11, 4),
+                requiredClearanceCells: map.CopyClearanceCells());
+            var built = scenario.Build(map);
+            Assert(built.Success && built.SelectedVehicleCount == 2, built.FailReason);
+            Assert(built.Problem.FireCell.HasValue && built.Problem.FireCell.Value == (11, 4),
+                "화재 위치 메타데이터가 문제로 전달되지 않음");
+            var exact = ExactEmergencySolverV2.SolveWeighted(
+                built.Problem, heuristicWeight: 1, maxExpansions: 1000000);
+            Assert(exact.Success && exact.Ticks == 19,
+                "시나리오 분리 후 기존 전체 확보 19틱을 재현하지 못함");
+        }
+
+        private static void TestEmergencyScenarioSelectsBlockers()
+        {
+            var map = V2MapCatalog.SmallParkingBlock.Build();
+            var scenario = new EmergencyScenarioV2(
+                "horizontal-only",
+                fireCell: (7, 4),
+                requiredClearanceCells: new[] { (6, 3), (7, 3) });
+            var built = scenario.Build(map);
+            Assert(built.Success, built.FailReason);
+            Assert(built.SelectedVehicleCount == 1 && built.Problem.VehicleCount == 1,
+                "확보구간 밖 차량까지 작업 대상으로 선택함");
+            Assert(built.Problem.FixedVehiclePoses.Count == 1,
+                "선택되지 않은 이동 후보가 고정 주차차량으로 보존되지 않음");
+        }
+
+        private static void TestEmergencyScenarioRejectsFixedObstruction()
+        {
+            var map = V2MapCatalog.ApartmentAislePrototype.Build();
+            var scenario = new EmergencyScenarioV2(
+                "fixed-obstruction",
+                fireCell: (4, 5),
+                requiredClearanceCells: new[] { (0, 6) });
+            var built = scenario.Build(map);
+            Assert(!built.Success && built.Problem == null,
+                "고정 차량이 확보구간을 막는데 문제를 생성함");
+            Assert(built.FailReason.Contains("고정 차량"),
+                "구조 실패 원인을 고정 차량으로 보고하지 않음");
         }
 
         private static int Run(string name, Action test)

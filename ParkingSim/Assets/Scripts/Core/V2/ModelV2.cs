@@ -98,6 +98,7 @@ namespace ParkingSim.Core.V2
         public IReadOnlyList<(int X, int Y)> RobotStarts { get; }
         public IReadOnlyList<VehiclePose> FixedVehiclePoses { get; }
         public OperationTimingV2 Timing { get; }
+        public (int X, int Y)? FireCell { get; }
         public int VehicleCount => InitialVehicleSlots.Count;
         public int StagingCapacity => Slots.Count(s => s.Kind == SlotKind.Staging);
 
@@ -108,7 +109,8 @@ namespace ParkingSim.Core.V2
             IEnumerable<(int X, int Y)> robotStarts,
             IEnumerable<(int X, int Y)> clearanceCells,
             IEnumerable<VehiclePose> fixedVehiclePoses = null,
-            OperationTimingV2 timing = null)
+            OperationTimingV2 timing = null,
+            (int X, int Y)? fireCell = null)
         {
             if (width <= 0 || height <= 0) throw new ArgumentOutOfRangeException(nameof(width));
             if (floor == null || floor.GetLength(0) != width || floor.GetLength(1) != height)
@@ -125,6 +127,7 @@ namespace ParkingSim.Core.V2
                 ? new List<VehiclePose>()
                 : fixedVehiclePoses.ToList();
             Timing = timing ?? new OperationTimingV2();
+            FireCell = fireCell;
 
             if (RobotStarts.Count != 2)
                 throw new ArgumentException("V2 정확해 오라클은 우선 로봇 2대만 지원");
@@ -145,6 +148,8 @@ namespace ParkingSim.Core.V2
             foreach (var start in RobotStarts)
                 if (!IsFloor(start.X, start.Y))
                     throw new ArgumentException("로봇 시작점이 floor 밖임");
+            if (FireCell.HasValue && !IsFloor(FireCell.Value.X, FireCell.Value.Y))
+                throw new ArgumentException("화재 위치가 floor 밖임");
             foreach (var pose in FixedVehiclePoses)
                 if (!PoseFits(pose))
                     throw new ArgumentException("고정 차량 풋프린트가 floor 밖임");
@@ -178,6 +183,8 @@ namespace ParkingSim.Core.V2
         public bool IsClearanceCell(int x, int y) => _clearanceCells.Contains((x, y));
 
         public bool[,] CopyFloor() => (bool[,])_floor.Clone();
+
+        public (int X, int Y)[] CopyClearanceCells() => _clearanceCells.ToArray();
 
         private static HashSet<(int, int)> PoseCells(VehiclePose pose)
         {
