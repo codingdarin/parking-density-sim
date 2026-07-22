@@ -5,6 +5,25 @@ namespace ParkingSim.Scenarios
 {
     public static class V2ScaleDemo
     {
+        public static void RunQualityGate()
+        {
+            PlannerQualityReportV2 report = PlannerQualityEvaluatorV2.EvaluateLineRolling();
+            Console.WriteLine("=== Model V2 운영 후보 품질 게이트: rolling(창3) vs 전역 exact ===");
+            Console.WriteLine("차량 | exact | rolling | 격차 | exact확장 | rolling확장 | 판정");
+            Console.WriteLine(new string('-', 78));
+            foreach (PlannerQualityRowV2 row in report.Rows)
+            {
+                Console.WriteLine(
+                    $" {row.VehicleCount,2}  | {FormatTicks(row.ExactSuccess, row.ExactTicks),5} |" +
+                    $" {FormatTicks(row.CandidateSuccess, row.CandidateTicks),7} |" +
+                    $" {(row.ExactSuccess && row.CandidateSuccess ? row.GapPercent.ToString("+0.0;-0.0;0.0") + "%" : "-"),6} |" +
+                    $" {row.ExactExpandedStates,10:N0} | {row.CandidateExpandedStates,12:N0} | " +
+                    (row.WithinTolerance ? "통과" : "실패: " + row.FailReason));
+            }
+            Console.WriteLine("최종 판정: " +
+                              (report.AllWithinTolerance ? "운영 후보 채택 가능" : "채택 보류 — 후보 플래너 교정 필요"));
+        }
+
         public static void RunRolling(int vehicles)
         {
             if (vehicles < 2) vehicles = 2;
@@ -54,6 +73,11 @@ namespace ParkingSim.Scenarios
                     if (!rolling.Success) break;
                 }
             }
+        }
+
+        private static string FormatTicks(bool success, int ticks)
+        {
+            return success ? ticks + "틱" : "실패";
         }
     }
 }

@@ -38,6 +38,9 @@ namespace ParkingSim
                 case "v2rolling":
                     Scenarios.V2ScaleDemo.RunRolling(lanes > 1 ? lanes : 5);
                     break;
+                case "v2quality":
+                    Scenarios.V2ScaleDemo.RunQualityGate();
+                    break;
                 case "v2tradeoff":
                     Scenarios.V2TradeoffDemo.Run();
                     break;
@@ -78,7 +81,7 @@ namespace ParkingSim
                     break;
                 }
                 default:
-                    Console.WriteLine("사용법: [layout|carry|multi|test|sanity|v2test|v2scale|v2rolling|v2tradeoff|baseline|emergency|batch|d9|normal] [숫자] [--all]");
+                    Console.WriteLine("사용법: [layout|carry|multi|test|sanity|v2test|v2scale|v2rolling|v2quality|v2tradeoff|baseline|emergency|batch|d9|normal] [숫자] [--all]");
                     break;
             }
         }
