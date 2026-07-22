@@ -1,181 +1,245 @@
 using System.Collections.Generic;
+using ParkingSim.Core.V2;
 using UnityEngine;
-using ParkingSim.Core.Agents;
-using ParkingSim.Core.Emergency;
-using ParkingSim.Core.Grid;
 
 namespace ParkingSim.Runtime
 {
     /// <summary>
-    /// D5 최소 통합 (가정 검증용) — "코드생성 전략으로 하루 통합"이 참인지 밟아보는 부트스트랩.
-    /// 인스펙터 연결 0: Play 시 코드가 격자·차량·로봇·카메라를 전부 생성하고,
-    /// 로봇 1대를 코어(EmergencyPlanner)의 RobotTimeline 출력대로 이동시킨다.
-    /// 데모가 아니라 마찰(좌표계·카메라·보간·입력·URP 머티리얼) 조기 발견이 목적.
-    ///
-    /// 좌표 매핑: 격자 (x,y) → 월드 (x, 0, y). 카메라는 위에서 XZ 평면을 내려다봄(top-down).
+    /// Model V2 최소 통합 검증기.
+    /// 인스펙터 연결 없이 실제 소형 주차 블록과 exact 상태 타임라인을 생성해 재생한다.
+    /// 차량은 lift 뒤에도 사라지지 않고 AGV 위에서 이동한 뒤 유한 적치면을 계속 점유한다.
     /// </summary>
     public sealed class SimulationRunner : MonoBehaviour
     {
         [RuntimeInitializeOnLoadMethod(RuntimeInitializeLoadType.AfterSceneLoad)]
         private static void Bootstrap()
         {
-            var go = new GameObject("SimBootstrap");
+            if (Object.FindAnyObjectByType<SimulationRunner>() != null) return;
+            var go = new GameObject("ModelV2-SimBootstrap");
             go.AddComponent<SimulationRunner>();
         }
 
-        private const float SecondsPerTick = 0.25f; // 표시용 (실측 2.5초/틱을 10배속)
+        private const float SecondsPerTick = 0.35f;
+        private const float EndHoldTicks = 4f;
 
-        private ParkingLot _lot;
-        private List<RobotTimeline> _schedule;
-        private Dictionary<int, GameObject> _carViews;
-        private Dictionary<int, int> _liftTicks;
-        private GameObject _agv;
-        private int _endTick;
+        private EmergencyProblemV2 _problem;
+        private ExactEmergencyResultV2 _plan;
+        private readonly Dictionary<int, GameObject> _carViews = new Dictionary<int, GameObject>();
+        private GameObject[] _robotViews;
         private float _time;
 
         private void Start()
         {
-            // 1) 코어: 소형 시나리오 계획 (로봇 1대가 전 미션 체이닝)
-            _lot = ParkingLayoutBuilder.Build(new LayoutConfig { OccupiedLanes = 1 });
-            var plan = EmergencyPlanner.Plan(_lot, new EmergencyConfig { FireMeters = 40, RobotCount = 1 });
-            if (!plan.Success || plan.Schedules.Length == 0)
+            _problem = V2ProblemFactory.ParkingBlockProblem();
+            _plan = ExactEmergencySolverV2.SolveWeighted(
+                _problem,
+                heuristicWeight: 1,
+                maxExpansions: 1000000,
+                activeRobotCount: 2,
+                captureTimeline: true);
+
+            if (!_plan.Success || _plan.Timeline.Count == 0)
             {
-                Debug.LogError($"[Sim] 계획 실패: {plan.FailReason}");
+                Debug.LogError("[Model V2] exact 계획 실패: " + _plan.FailReason);
                 enabled = false;
                 return;
             }
-            _schedule = plan.Schedules[0];
-            _liftTicks = plan.CarLiftTicks;
-            _endTick = plan.EndTick;
 
-            BuildGround();
-            BuildCars();
-            BuildAgv();
+            BuildGrid();
+            BuildCars(_plan.Timeline[0]);
+            BuildRobots();
             SetupCamera();
+            ApplyFrame(_plan.Timeline[0], _plan.Timeline[0], 0f);
 
-            Debug.Log($"[Sim] 시작 — 격자 {_lot.Grid.Width}x{_lot.Grid.Height}, 로봇1 미션 {_schedule.Count}개, 총 {_endTick}틱");
+            Debug.Log(
+                "[Model V2] 2로봇·차량보존 재생 시작 — " +
+                _problem.Width + "x" + _problem.Height + ", " +
+                _plan.Ticks + "틱, 회전 " + _plan.RotationActions + "회, 확장 " +
+                _plan.ExpandedStates + "상태");
         }
 
         private void Update()
         {
-            if (_schedule == null) return;
+            if (_plan == null || _plan.Timeline.Count == 0) return;
 
             _time += Time.deltaTime;
-            float tf = _time / SecondsPerTick;
-            int t = Mathf.FloorToInt(tf);
-            float frac = tf - t;
+            float cycleTicks = _plan.Ticks + EndHoldTicks;
+            float timelineTick = (_time / SecondsPerTick) % cycleTicks;
+            if (timelineTick > _plan.Ticks) timelineTick = _plan.Ticks;
 
-            // 차량: 리프트 틱에 사라짐 (통로가 비워지는 것을 시각화)
-            foreach (var kv in _liftTicks)
-                if (_carViews.TryGetValue(kv.Key, out var cv) && cv.activeSelf && t >= kv.Value)
-                    cv.SetActive(false);
-
-            // 로봇: 코어 타임라인의 틱 간 위치를 선형 보간
-            var a = PoseAt(t);
-            var b = PoseAt(t + 1);
-            var pa = new Vector3(a.X, 0.5f, a.Y);
-            var pb = new Vector3(b.X, 0.5f, b.Y);
-            _agv.transform.position = Vector3.Lerp(pa, pb, Mathf.Clamp01(frac));
-            SetColor(_agv, a.Carrying ? new Color(0.9f, 0.5f, 0.1f) : new Color(0.1f, 0.6f, 0.9f));
-
-            if (t > _endTick) _time = 0f; // 루프 재생
+            int aIndex = Mathf.Clamp(Mathf.FloorToInt(timelineTick), 0, _plan.Timeline.Count - 1);
+            int bIndex = Mathf.Min(aIndex + 1, _plan.Timeline.Count - 1);
+            float fraction = bIndex == aIndex ? 0f : timelineTick - aIndex;
+            ApplyFrame(_plan.Timeline[aIndex], _plan.Timeline[bIndex], fraction);
         }
 
-        // ── 코어 타임라인 조회 (체이닝된 미션들에서 tick의 위치) ──
-        private (int X, int Y, bool Carrying) PoseAt(int tick)
+        private void ApplyFrame(StateSnapshotV2 a, StateSnapshotV2 b, float fraction)
         {
-            RobotTimeline seg = null;
-            foreach (var s in _schedule)
+            for (int i = 0; i < _robotViews.Length; i++)
             {
-                if (s.StartTick <= tick) seg = s;
-                else break;
+                RobotSnapshotV2 ra = a.Robots[i];
+                RobotSnapshotV2 rb = b.Robots[i];
+                _robotViews[i].transform.position = Vector3.Lerp(
+                    RobotPosition(ra), RobotPosition(rb), fraction);
+                bool carrying = ra.CarryVehicle >= 0 || rb.CarryVehicle >= 0;
+                bool servicing = ra.ServiceRemaining > 0 || rb.ServiceRemaining > 0;
+                SetColor(_robotViews[i], RobotColor(i, carrying, servicing));
             }
-            if (seg == null) seg = _schedule.Count > 0 ? _schedule[0] : null;
-            return seg?.At(tick) ?? (0, 0, false);
+
+            for (int i = 0; i < a.Vehicles.Length; i++)
+            {
+                VehicleSnapshotV2 va = a.Vehicles[i];
+                VehicleSnapshotV2 vb = FindVehicle(b, va.VehicleId);
+                GameObject view = _carViews[va.VehicleId];
+                view.transform.position = Vector3.Lerp(
+                    VehiclePosition(va.Pose, va.Carried),
+                    VehiclePosition(vb.Pose, vb.Carried),
+                    fraction);
+                view.transform.rotation = Quaternion.Lerp(
+                    VehicleRotation(va.Pose), VehicleRotation(vb.Pose), fraction);
+                SetColor(view, va.Carried || vb.Carried
+                    ? new Color(1f, 0.55f, 0.08f)
+                    : VehicleColor(va.VehicleId));
+            }
         }
 
-        // ── 코드 생성 (프리미티브) ──
-        private void BuildGround()
+        private void BuildGrid()
         {
-            for (int y = 0; y < _lot.Grid.Height; y++)
-                for (int x = 0; x < _lot.Grid.Width; x++)
+            for (int y = 0; y < _problem.Height; y++)
+            {
+                for (int x = 0; x < _problem.Width; x++)
                 {
                     var tile = GameObject.CreatePrimitive(PrimitiveType.Cube);
-                    tile.transform.position = new Vector3(x, -0.05f, y);
-                    tile.transform.localScale = new Vector3(0.95f, 0.1f, 0.95f);
-                    SetColor(tile, CellColor(_lot.Grid.TypeAt(x, y)));
+                    tile.name = "Cell-" + x + "-" + y;
+                    tile.transform.position = new Vector3(x, _problem.IsFloor(x, y) ? -0.08f : 0.04f, y);
+                    tile.transform.localScale = new Vector3(0.94f, _problem.IsFloor(x, y) ? 0.12f : 0.35f, 0.94f);
+                    SetColor(tile, CellColor(x, y));
                 }
-        }
-
-        private void BuildCars()
-        {
-            _carViews = new Dictionary<int, GameObject>();
-            foreach (var car in _lot.Cars)
-            {
-                var cube = GameObject.CreatePrimitive(PrimitiveType.Cube);
-                var (x2, y2) = car.SecondCell;
-                // 1x2 강체: 앵커와 둘째 셀의 중점, 방향에 맞춰 스케일
-                cube.transform.position = new Vector3((car.X + x2) / 2f, 0.4f, (car.Y + y2) / 2f);
-                cube.transform.localScale = car.Horizontal
-                    ? new Vector3(1.9f, 0.8f, 0.9f)
-                    : new Vector3(0.9f, 0.8f, 1.9f);
-                SetColor(cube, car.InCorridor ? new Color(0.85f, 0.2f, 0.2f) : new Color(0.6f, 0.6f, 0.65f));
-                _carViews[car.Id] = cube;
             }
         }
 
-        private void BuildAgv()
+        private void BuildCars(StateSnapshotV2 initial)
         {
-            _agv = GameObject.CreatePrimitive(PrimitiveType.Cube);
-            _agv.transform.localScale = new Vector3(0.8f, 1f, 0.8f);
-            _agv.name = "AGV-1";
+            foreach (VehicleSnapshotV2 vehicle in initial.Vehicles)
+            {
+                var cube = GameObject.CreatePrimitive(PrimitiveType.Cube);
+                cube.name = "Vehicle-" + (vehicle.VehicleId + 1);
+                cube.transform.localScale = new Vector3(1.82f, 0.42f, 0.82f);
+                SetColor(cube, VehicleColor(vehicle.VehicleId));
+                _carViews.Add(vehicle.VehicleId, cube);
+            }
+        }
+
+        private void BuildRobots()
+        {
+            _robotViews = new GameObject[2];
+            for (int i = 0; i < _robotViews.Length; i++)
+            {
+                var cube = GameObject.CreatePrimitive(PrimitiveType.Cube);
+                cube.name = "AGV-" + (i + 1);
+                cube.transform.localScale = new Vector3(0.72f, 0.18f, 0.72f);
+                SetColor(cube, RobotColor(i, false, false));
+                _robotViews[i] = cube;
+            }
         }
 
         private void SetupCamera()
         {
-            // 씬의 실제 렌더 카메라를 직접 재사용 (Camera.main은 태그 의존이라 Unity 6에서 빗나감).
-            var cams = Object.FindObjectsByType<Camera>(FindObjectsSortMode.None);
-            Camera cam = cams.Length > 0 ? cams[0] : null;
-            for (int i = 1; i < cams.Length; i++) cams[i].gameObject.SetActive(false); // 렌더 주체 단일화
-            if (cam == null)
+            Camera[] cameras = Object.FindObjectsByType<Camera>();
+            Camera camera = cameras.Length > 0 ? cameras[0] : null;
+            for (int i = 1; i < cameras.Length; i++) cameras[i].gameObject.SetActive(false);
+            if (camera == null)
             {
-                var camGo = new GameObject("SimCamera") { tag = "MainCamera" };
-                cam = camGo.AddComponent<Camera>();
-                camGo.AddComponent<AudioListener>();
+                var cameraObject = new GameObject("ModelV2-Camera") { tag = "MainCamera" };
+                camera = cameraObject.AddComponent<Camera>();
+                cameraObject.AddComponent<AudioListener>();
             }
 
-            float w = _lot.Grid.Width, h = _lot.Grid.Height;
-            float aspect = cam.aspect > 0.01f ? cam.aspect : 16f / 9f;
-            float size = Mathf.Max(h / 2f, w / (2f * aspect)) + 1f; // 폭·높이 둘 다 프레임에 들어오게
-            cam.orthographic = true;
-            cam.orthographicSize = size;
-            cam.nearClipPlane = 0.1f;
-            cam.farClipPlane = 200f;
-            cam.clearFlags = CameraClearFlags.SolidColor;
-            cam.backgroundColor = new Color(0.12f, 0.12f, 0.14f);
-            cam.transform.position = new Vector3(w / 2f, 50f, h / 2f);
-            cam.transform.rotation = Quaternion.Euler(90f, 0f, 0f); // 위에서 XZ 내려다봄
-            Debug.Log($"[Sim] 카메라 '{cam.name}' (총 {cams.Length}대) size={size:0.0} aspect={aspect:0.00} pos={cam.transform.position}");
+            float aspect = camera.aspect > 0.01f ? camera.aspect : 16f / 9f;
+            float size = Mathf.Max(_problem.Height / 2f, _problem.Width / (2f * aspect)) + 1f;
+            camera.orthographic = true;
+            camera.orthographicSize = size;
+            camera.nearClipPlane = 0.1f;
+            camera.farClipPlane = 100f;
+            camera.clearFlags = CameraClearFlags.SolidColor;
+            camera.backgroundColor = new Color(0.06f, 0.07f, 0.09f);
+            camera.transform.position = new Vector3(
+                (_problem.Width - 1) / 2f, 30f, (_problem.Height - 1) / 2f);
+            camera.transform.rotation = Quaternion.Euler(90f, 0f, 0f);
+            Debug.Log("[Model V2] camera=" + camera.name + ", orthoSize=" + size.ToString("0.0"));
         }
 
-        private static Color CellColor(CellType t)
+        private Color CellColor(int x, int y)
         {
-            switch (t)
+            if (!_problem.IsFloor(x, y)) return new Color(0.09f, 0.10f, 0.12f);
+            if (IsSlotCell(x, y, SlotKind.Staging)) return new Color(0.12f, 0.42f, 0.24f);
+            if (IsSlotCell(x, y, SlotKind.Blocking)) return new Color(0.48f, 0.16f, 0.16f);
+            if (_problem.IsClearanceCell(x, y)) return new Color(0.42f, 0.30f, 0.10f);
+            return new Color(0.22f, 0.25f, 0.30f);
+        }
+
+        private bool IsSlotCell(int x, int y, SlotKind kind)
+        {
+            foreach (ParkingSlotV2 slot in _problem.Slots)
             {
-                case CellType.Corridor: return new Color(0.20f, 0.22f, 0.26f);
-                case CellType.Road: return new Color(0.28f, 0.28f, 0.30f);
-                case CellType.Staging: return new Color(0.20f, 0.35f, 0.25f);
-                case CellType.Stall: return new Color(0.16f, 0.16f, 0.18f);
-                default: return new Color(0.08f, 0.08f, 0.08f); // Outside
+                if (slot.Kind != kind) continue;
+                var second = slot.Pose.SecondCell;
+                if ((slot.Pose.X == x && slot.Pose.Y == y) ||
+                    (second.X == x && second.Y == y)) return true;
             }
+            return false;
         }
 
-        /// <summary>Built-in(_Color)·URP/Lit(_BaseColor) 양쪽 대응 — Unity 6 RP 마찰 선제 방어.</summary>
-        private static void SetColor(GameObject go, Color c)
+        private static VehicleSnapshotV2 FindVehicle(StateSnapshotV2 frame, int vehicleId)
         {
-            var m = go.GetComponent<Renderer>().material;
-            m.color = c;
-            if (m.HasProperty("_BaseColor")) m.SetColor("_BaseColor", c);
+            foreach (VehicleSnapshotV2 vehicle in frame.Vehicles)
+                if (vehicle.VehicleId == vehicleId) return vehicle;
+            return frame.Vehicles[0];
+        }
+
+        private static Vector3 RobotPosition(RobotSnapshotV2 robot)
+        {
+            return new Vector3(robot.X, 0.20f, robot.Y);
+        }
+
+        private static Vector3 VehiclePosition(VehiclePose pose, bool carried)
+        {
+            var second = pose.SecondCell;
+            return new Vector3(
+                (pose.X + second.X) / 2f,
+                carried ? 0.52f : 0.30f,
+                (pose.Y + second.Y) / 2f);
+        }
+
+        private static Quaternion VehicleRotation(VehiclePose pose)
+        {
+            return pose.Orientation == VehicleOrientation.Horizontal
+                ? Quaternion.identity
+                : Quaternion.Euler(0f, 90f, 0f);
+        }
+
+        private static Color VehicleColor(int vehicleId)
+        {
+            return vehicleId % 2 == 0
+                ? new Color(0.90f, 0.22f, 0.20f)
+                : new Color(0.72f, 0.18f, 0.72f);
+        }
+
+        private static Color RobotColor(int robotIndex, bool carrying, bool servicing)
+        {
+            if (servicing) return new Color(1f, 0.85f, 0.10f);
+            if (carrying) return new Color(1f, 0.48f, 0.05f);
+            return robotIndex == 0
+                ? new Color(0.10f, 0.62f, 0.95f)
+                : new Color(0.12f, 0.88f, 0.76f);
+        }
+
+        /// <summary>Built-in(_Color)과 URP/Lit(_BaseColor) 양쪽에서 보이도록 설정.</summary>
+        private static void SetColor(GameObject target, Color color)
+        {
+            Material material = target.GetComponent<Renderer>().material;
+            material.color = color;
+            if (material.HasProperty("_BaseColor")) material.SetColor("_BaseColor", color);
         }
     }
 }
