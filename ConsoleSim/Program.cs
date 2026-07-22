@@ -32,6 +32,25 @@ namespace ParkingSim
                 case "baseline":
                     Tests.AdversarialTests.RunNoCoordinationBaseline();
                     break;
+                case "batch":
+                {
+                    string scenarioCsv = null;
+                    foreach (var a in args)
+                        if (a.EndsWith(".csv")) scenarioCsv = a;
+                    Scenarios.BatchRunner.Run(scenarioCsv);
+                    break;
+                }
+                case "normal":
+                {
+                    int seed = 42, robots = 4;
+                    foreach (var a in args)
+                    {
+                        if (a.StartsWith("--seed=") && int.TryParse(a.Substring(7), out int s)) seed = s;
+                        if (a.StartsWith("--robots=") && int.TryParse(a.Substring(9), out int rc)) robots = rc;
+                    }
+                    Scenarios.NormalOpsDemo.Run(lanes, robots, seed, writeCsv: Array.IndexOf(args, "--csv") >= 0);
+                    break;
+                }
                 case "emergency":
                 {
                     double fire = 40;
@@ -41,7 +60,7 @@ namespace ParkingSim
                     break;
                 }
                 default:
-                    Console.WriteLine("사용법: [layout|carry|multi|test|sanity|baseline] [점유 레인 0~3] [--all]");
+                    Console.WriteLine("사용법: [layout|carry|multi|test|sanity|baseline|emergency|batch|normal] [점유 레인 0~3] [--all]");
                     break;
             }
         }
