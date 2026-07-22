@@ -34,7 +34,8 @@ namespace ParkingSim.Tests
             passed += Run("㉒ 구조 실패 — 고정 차량이 확보구간을 막으면 탐색 전 거부", TestEmergencyScenarioRejectsFixedObstruction);
             passed += Run("㉓ 운영 후보 — 직선4대 exact 30틱·물리 유효 재현", TestPipelinedLineFour);
             passed += Run("㉔ 대표 기하 — 혼합방향 소형 블록 exact 19틱 재현", TestPipelinedParkingBlock);
-            Console.WriteLine($"\nV2 타당성 게이트 {passed}/24 통과");
+            passed += Run("㉕ 아파트 프로토타입 — 고정차16 보존·20틱 기준", TestPipelinedApartmentPrototype);
+            Console.WriteLine($"\nV2 타당성 게이트 {passed}/25 통과");
             return passed;
         }
 
@@ -403,6 +404,19 @@ namespace ParkingSim.Tests
             Assert(result.Ticks == 19, "소형 혼합방향 블록 exact 기준 19틱 불일치");
             Assert(result.FinalVehicleSlots.Distinct().Count() == 2,
                 "소형 블록 적치면 중복");
+        }
+
+        private static void TestPipelinedApartmentPrototype()
+        {
+            EmergencyProblemV2 map = V2MapCatalog.ApartmentAislePrototype.Build();
+            var scenario = new EmergencyScenarioV2(
+                "apartment-regression", (17, 5), map.CopyClearanceCells());
+            EmergencyScenarioBuildResultV2 built = scenario.Build(map);
+            Assert(built.Success && built.SelectedVehicleCount == 2, built.FailReason);
+            PipelinedPlanResultV2 result = PipelinedPrioritizedPlannerV2.Solve(built.Problem);
+            Assert(result.Success && result.PhysicallyValid, result.FailReason);
+            Assert(result.Ticks == 20, "아파트 프로토타입 기준 20틱 불일치");
+            Assert(map.FixedVehiclePoses.Count == 16, "고정차량 16대 보존 실패");
         }
 
         private static int Run(string name, Action test)

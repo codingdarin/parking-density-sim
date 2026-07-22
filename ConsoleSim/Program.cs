@@ -30,7 +30,7 @@ namespace ParkingSim
                     Environment.ExitCode = Tests.AdversarialTests.RunSanityCheck() ? 0 : 1;
                     break;
                 case "v2test":
-                    Environment.ExitCode = Tests.ModelV2Tests.RunAll() == 24 ? 0 : 1;
+                    Environment.ExitCode = Tests.ModelV2Tests.RunAll() == 25 ? 0 : 1;
                     break;
                 case "v2scale":
                     Scenarios.V2ScaleDemo.Run(lanes > 1 ? lanes : 4);
@@ -49,6 +49,9 @@ namespace ParkingSim
                     break;
                 case "v2pblock":
                     Scenarios.V2ScaleDemo.RunPipelineBlock();
+                    break;
+                case "v2papartment":
+                    Scenarios.V2ScaleDemo.RunPipelineApartment();
                     break;
                 case "v2tradeoff":
                     Scenarios.V2TradeoffDemo.Run();
@@ -90,7 +93,7 @@ namespace ParkingSim
                     break;
                 }
                 default:
-                    Console.WriteLine("사용법: [layout|carry|multi|test|sanity|v2test|v2scale|v2rolling|v2quality|v2pipeline|v2pdetail|v2pblock|v2tradeoff|baseline|emergency|batch|d9|normal] [숫자] [--all]");
+                    Console.WriteLine("사용법: [layout|carry|multi|test|sanity|v2test|v2scale|v2rolling|v2quality|v2pipeline|v2pdetail|v2pblock|v2papartment|v2tradeoff|baseline|emergency|batch|d9|normal] [숫자] [--all]");
                     break;
             }
         }
