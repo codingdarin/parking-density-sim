@@ -156,6 +156,162 @@ namespace ParkingSim.Core.V2
             return result;
         }
 
+        /// <summary>
+        /// 동일한 물리 상태·충돌 규칙을 쓰되 남은 작업거리 휴리스틱을 가중한 근사 탐색.
+        /// 작은 문제에서는 Solve(BFS 정확해)와 최적성 격차를 측정하고,
+        /// 격차 기준을 통과한 뒤에만 더 큰 문제에 사용한다.
+        /// </summary>
+        public static ExactEmergencyResultV2 SolveWeighted(
+            EmergencyProblemV2 problem, int heuristicWeight = 1,
+            int maxExpansions = 200000, int activeRobotCount = 2)
+        {
+            if (heuristicWeight < 1) throw new ArgumentOutOfRangeException(nameof(heuristicWeight));
+            return SolveWeightedRatio(
+                problem, heuristicNumerator: heuristicWeight, heuristicDenominator: 1,
+                maxExpansions: maxExpansions, activeRobotCount: activeRobotCount);
+        }
+
+        /// <summary>
+        /// admissible h에 대해 w=1.1(10g+11h) bounded weighted A*.
+        /// 해를 반환하면 이 행동 모델의 최적 makespan 대비 10% 이내 상한을 갖는다.
+        /// </summary>
+        public static ExactEmergencyResultV2 SolveBounded10Percent(
+            EmergencyProblemV2 problem, int maxExpansions = 1000000, int activeRobotCount = 2)
+        {
+            return SolveWeightedRatio(
+                problem, heuristicNumerator: 11, heuristicDenominator: 10,
+                maxExpansions: maxExpansions, activeRobotCount: activeRobotCount);
+        }
+
+        private static ExactEmergencyResultV2 SolveWeightedRatio(
+            EmergencyProblemV2 problem, int heuristicNumerator, int heuristicDenominator,
+            int maxExpansions, int activeRobotCount)
+        {
+            if (heuristicNumerator < heuristicDenominator || heuristicDenominator < 1)
+                throw new ArgumentOutOfRangeException(nameof(heuristicNumerator));
+            if (activeRobotCount < 1 || activeRobotCount > 2)
+                throw new ArgumentOutOfRangeException(nameof(activeRobotCount));
+
+            var result = new ExactEmergencyResultV2
+            {
+                InitialVehicleCount = problem.VehicleCount,
+                ActiveRobotCount = activeRobotCount,
+            };
+            if (problem.StagingCapacity < problem.VehicleCount)
+            {
+                result.Success = false;
+                result.FailReason = $"적치 용량 부족: 차량 {problem.VehicleCount}대 > 슬롯 {problem.StagingCapacity}면";
+                result.FinalVehicleCount = problem.VehicleCount;
+                return result;
+            }
+
+            var start = CreateStart(problem);
+            string startKey = Key(start);
+            var open = new SearchHeap();
+            var bestDepth = new Dictionary<string, int> { [startKey] = 0 };
+            var parents = new Dictionary<string, Parent>();
+            open.Push(
+                (long)heuristicNumerator * Heuristic(problem, start, activeRobotCount), 0, start);
+
+            while (open.Count > 0 && result.ExpandedStates < maxExpansions)
+            {
+                var node = open.Pop();
+                var current = node.State;
+                int depth = node.Depth;
+                string currentKey = Key(current);
+                if (!bestDepth.TryGetValue(currentKey, out int known) || known != depth) continue;
+                result.ExpandedStates++;
+
+                if (IsGoal(problem, current))
+                {
+                    result.Success = true;
+                    result.Ticks = depth;
+                    result.FinalVehicleSlots = (int[])current.VehicleSlots.Clone();
+                    result.FinalVehicleCount = current.VehicleSlots.Length;
+                    Reconstruct(startKey, currentKey, parents, result.JointActions);
+                    return result;
+                }
+
+                var a0s = Actions(problem, current, 0, activeRobotCount);
+                var a1s = Actions(problem, current, 1, activeRobotCount);
+                foreach (var a0 in a0s)
+                {
+                    foreach (var a1 in a1s)
+                    {
+                        var next = ApplyJoint(problem, current, a0, a1);
+                        if (next == null) continue;
+                        int nextDepth = depth + 1;
+                        string key = Key(next);
+                        if (bestDepth.TryGetValue(key, out int previous) && previous <= nextDepth) continue;
+                        bestDepth[key] = nextDepth;
+                        parents[key] = new Parent
+                        {
+                            PreviousKey = currentKey,
+                            JointAction = $"r1:{a0.Label} | r2:{a1.Label}",
+                        };
+                        int h = Heuristic(problem, next, activeRobotCount);
+                        long score = (long)heuristicDenominator * nextDepth +
+                                     (long)heuristicNumerator * h;
+                        open.Push(score, nextDepth, next);
+                    }
+                }
+            }
+
+            result.Success = false;
+            result.FailReason = result.ExpandedStates >= maxExpansions
+                ? $"가중 탐색 상한 {maxExpansions} 상태 초과"
+                : "해 없음";
+            result.FinalVehicleCount = problem.VehicleCount;
+            return result;
+        }
+
+        private static int Heuristic(EmergencyProblemV2 problem, State state, int activeRobotCount)
+        {
+            int mandatoryActions = 0;
+            int longestSingleTask = 0;
+            for (int v = 0; v < state.VehicleSlots.Length; v++)
+            {
+                int location = state.VehicleSlots[v];
+                if (location >= 0 && problem.Slots[location].Kind == SlotKind.Staging) continue;
+
+                if (location < 0)
+                {
+                    int r = -1 - location;
+                    var robot = state.Robots[r];
+                    mandatoryActions += 1; // 최소 하차 1틱
+                    int task = 1 + MinStagingDistance(
+                        problem, new VehiclePose(robot.X, robot.Y, robot.Orientation), state);
+                    longestSingleTask = Math.Max(longestSingleTask, task);
+                }
+                else
+                {
+                    var source = problem.Slots[location].Pose;
+                    mandatoryActions += 2; // 최소 리프트+하차 각 1틱
+                    int task = 2 + MinStagingDistance(problem, source, state);
+                    longestSingleTask = Math.Max(longestSingleTask, task);
+                }
+            }
+            // 두 하한의 max: 필수 액션 총량/R, 차량 하나의 최소 운반거리.
+            // 로봇 접근거리·슬롯 경합·타 차량 우회는 전부 무시하므로 admissible.
+            int actionLowerBound = (mandatoryActions + activeRobotCount - 1) / activeRobotCount;
+            return Math.Max(actionLowerBound, longestSingleTask);
+        }
+
+        private static int MinStagingDistance(
+            EmergencyProblemV2 problem, VehiclePose pose, State state)
+        {
+            int best = int.MaxValue;
+            for (int s = 0; s < problem.Slots.Count; s++)
+            {
+                var slot = problem.Slots[s];
+                if (slot.Kind != SlotKind.Staging || SlotOccupied(state, s)) continue;
+                int d = Math.Abs(pose.X - slot.Pose.X) + Math.Abs(pose.Y - slot.Pose.Y);
+                if (pose.Orientation != slot.Pose.Orientation) d++;
+                best = Math.Min(best, d);
+            }
+            return best == int.MaxValue ? 0 : best;
+        }
+
         private static State CreateStart(EmergencyProblemV2 problem)
         {
             var robots = new RobotState[2];
@@ -373,6 +529,69 @@ namespace ParkingSim.Core.V2
             }
             reversed.Reverse();
             output.AddRange(reversed);
+        }
+
+        private sealed class SearchHeap
+        {
+            public readonly struct Node
+            {
+                public long Score { get; }
+                public int Depth { get; }
+                public int Sequence { get; }
+                public State State { get; }
+
+                public Node(long score, int depth, int sequence, State state)
+                {
+                    Score = score;
+                    Depth = depth;
+                    Sequence = sequence;
+                    State = state;
+                }
+            }
+
+            private readonly List<Node> _items = new List<Node>();
+            private int _sequence;
+            public int Count => _items.Count;
+
+            public void Push(long score, int depth, State state)
+            {
+                _items.Add(new Node(score, depth, _sequence++, state));
+                int i = _items.Count - 1;
+                while (i > 0)
+                {
+                    int p = (i - 1) / 2;
+                    if (!Less(_items[i], _items[p])) break;
+                    (_items[i], _items[p]) = (_items[p], _items[i]);
+                    i = p;
+                }
+            }
+
+            public Node Pop()
+            {
+                var top = _items[0];
+                var last = _items[_items.Count - 1];
+                _items.RemoveAt(_items.Count - 1);
+                if (_items.Count == 0) return top;
+                _items[0] = last;
+                int i = 0;
+                while (true)
+                {
+                    int left = i * 2 + 1, right = left + 1, smallest = i;
+                    if (left < _items.Count && Less(_items[left], _items[smallest])) smallest = left;
+                    if (right < _items.Count && Less(_items[right], _items[smallest])) smallest = right;
+                    if (smallest == i) break;
+                    (_items[i], _items[smallest]) = (_items[smallest], _items[i]);
+                    i = smallest;
+                }
+                return top;
+            }
+
+            private static bool Less(Node a, Node b)
+            {
+                if (a.Score != b.Score) return a.Score < b.Score;
+                if (a.Depth != b.Depth) return a.Depth < b.Depth;
+                return a.Sequence < b.Sequence;
+            }
         }
     }
 }
