@@ -21,7 +21,6 @@ namespace ParkingSim.Runtime
 
         private const float SecondsPerTick = 0.32f;
         private const float EndHoldTicks = 5f;
-        private const string ActiveScenarioName = "corridor-l1-d100-p14-o14";
 
         private EmergencyProblemV2 _problem;
         private PipelinedPlanResultV2 _plan;
@@ -29,33 +28,56 @@ namespace ParkingSim.Runtime
         private readonly Dictionary<int, PipelinedMissionV2> _missions =
             new Dictionary<int, PipelinedMissionV2>();
         private GameObject[] _robotViews;
+        private GameObject _visualRoot;
+        private string _scenarioName;
+        private int _pocketCount;
+        private int _netAlpha;
+        private float _displayTick;
         private float _time;
 
         private void Start()
         {
+            LoadPreset(1);
+        }
+
+        private void LoadPreset(int preset)
+        {
+            int pockets = preset == 0 ? 0 : 14;
+            int offset = preset == 0 ? 0 : 14;
+            string scenarioName = preset == 0
+                ? "기준안 — 포켓 없음"
+                : "강건안 — 포켓14·최악 오프셋";
             EmergencyScenarioBuildResultV2 built =
                 CorridorScenarioFactoryV2.BuildEmergencyWithPockets(
                     fireMeters: 100,
-                    pocketCount: 14,
-                    pocketOffset: 14);
+                    pocketCount: pockets,
+                    pocketOffset: offset);
             if (!built.Success)
             {
                 Debug.LogError("[Model V2] 시나리오 생성 실패: " + built.FailReason);
-                enabled = false;
                 return;
             }
 
-            _problem = built.Problem;
-            _plan = PipelinedPrioritizedPlannerV2.Solve(
-                _problem,
+            PipelinedPlanResultV2 plan = PipelinedPrioritizedPlannerV2.Solve(
+                built.Problem,
                 activeRobotCount: 4,
                 maxHighLevelCandidates: 8);
-            if (!_plan.Success || !_plan.PhysicallyValid)
+            if (!plan.Success || !plan.PhysicallyValid)
             {
-                Debug.LogError("[Model V2] pipeline 계획 실패: " + _plan.FailReason);
-                enabled = false;
+                Debug.LogError("[Model V2] pipeline 계획 실패: " + plan.FailReason);
                 return;
             }
+
+            if (_visualRoot != null) Destroy(_visualRoot);
+            _visualRoot = new GameObject("ModelV2-VisualRoot");
+            _carViews.Clear();
+            _missions.Clear();
+            _problem = built.Problem;
+            _plan = plan;
+            _scenarioName = scenarioName;
+            _pocketCount = pockets;
+            _netAlpha = 20 - pockets;
+            _time = 0f;
             foreach (PipelinedMissionV2 mission in _plan.Missions)
                 _missions.Add(mission.VehicleIndex, mission);
 
@@ -68,10 +90,11 @@ namespace ParkingSim.Runtime
             ApplyTick(0f);
 
             Debug.Log(
-                "[Model V2] scenario=" + ActiveScenarioName +
+                "[Model V2] scenario=" + _scenarioName +
                 ", pipeline 재생 시작 — " + _problem.Width + "x" + _problem.Height +
                 ", 이동차량=" + _problem.VehicleCount + ", 고정차량=" +
-                _problem.FixedVehiclePoses.Count + ", 포켓=14, net alpha=6, " +
+                _problem.FixedVehiclePoses.Count + ", 포켓=" + _pocketCount +
+                ", net alpha=" + _netAlpha + ", " +
                 _plan.RobotTimelines.Length + "조, " + _plan.Ticks + "틱/" +
                 (_plan.Ticks * 2.5f).ToString("0.0") + "초, 확장 " +
                 _plan.ExpandedStates + "상태");
@@ -79,6 +102,8 @@ namespace ParkingSim.Runtime
 
         private void Update()
         {
+            if (Input.GetKeyDown(KeyCode.Alpha1)) LoadPreset(0);
+            if (Input.GetKeyDown(KeyCode.Alpha2)) LoadPreset(1);
             if (_plan == null) return;
             _time += Time.deltaTime;
             float cycle = _plan.Ticks + EndHoldTicks;
@@ -88,6 +113,7 @@ namespace ParkingSim.Runtime
 
         private void ApplyTick(float timelineTick)
         {
+            _displayTick = timelineTick;
             int aTick = Mathf.Clamp(Mathf.FloorToInt(timelineTick), 0, _plan.Ticks);
             int bTick = Mathf.Min(aTick + 1, _plan.Ticks);
             float fraction = bTick == aTick ? 0f : timelineTick - aTick;
@@ -140,6 +166,7 @@ namespace ParkingSim.Runtime
                 for (int x = 0; x < _problem.Width; x++)
                 {
                     var tile = GameObject.CreatePrimitive(PrimitiveType.Cube);
+                    Track(tile);
                     tile.name = "Cell-" + x + "-" + y;
                     bool floor = _problem.IsFloor(x, y);
                     tile.transform.position = new Vector3(x, floor ? -0.08f : 0.04f, y);
@@ -153,6 +180,7 @@ namespace ParkingSim.Runtime
         {
             if (!_problem.FireCell.HasValue) return;
             var fire = GameObject.CreatePrimitive(PrimitiveType.Cylinder);
+            Track(fire);
             fire.name = "Fire-Origin";
             fire.transform.position = new Vector3(
                 _problem.FireCell.Value.X, 0.05f, _problem.FireCell.Value.Y);
@@ -181,9 +209,10 @@ namespace ParkingSim.Runtime
             }
         }
 
-        private static GameObject CreateCar(string name, VehiclePose pose)
+        private GameObject CreateCar(string name, VehiclePose pose)
         {
             var car = GameObject.CreatePrimitive(PrimitiveType.Cube);
+            Track(car);
             car.name = name;
             car.transform.localScale = new Vector3(1.82f, 0.42f, 0.82f);
             car.transform.position = VehiclePosition(pose, false);
@@ -197,6 +226,7 @@ namespace ParkingSim.Runtime
             for (int robot = 0; robot < _plan.RobotTimelines.Length; robot++)
             {
                 var cube = GameObject.CreatePrimitive(PrimitiveType.Cube);
+                Track(cube);
                 cube.name = "TransportUnit-" + (robot + 1);
                 cube.transform.localScale = new Vector3(0.72f, 0.18f, 0.72f);
                 SetColor(cube, RobotColor(robot, false));
@@ -297,6 +327,27 @@ namespace ParkingSim.Runtime
             Material material = target.GetComponent<Renderer>().material;
             material.color = color;
             if (material.HasProperty("_BaseColor")) material.SetColor("_BaseColor", color);
+        }
+
+        private void Track(GameObject target)
+        {
+            target.transform.SetParent(_visualRoot.transform, worldPositionStays: true);
+        }
+
+        private void OnGUI()
+        {
+            if (_plan == null) return;
+            bool safe = _plan.Ticks <= 168;
+            GUI.Box(new Rect(12f, 12f, 350f, 118f), string.Empty);
+            GUI.Label(new Rect(24f, 22f, 330f, 24f), "Model V2 — " + _scenarioName);
+            GUI.Label(new Rect(24f, 46f, 330f, 24f),
+                "포켓 " + _pocketCount + "면 · net α +" + _netAlpha +
+                "대 · 로봇 " + _plan.RobotTimelines.Length + "조");
+            GUI.Label(new Rect(24f, 70f, 330f, 24f),
+                "확보 " + _plan.Ticks + "틱 / " + (_plan.Ticks * 2.5f).ToString("0.0") +
+                "초 · 7분 " + (safe ? "통과" : "실패") +
+                " · 재생 t=" + _displayTick.ToString("0.0"));
+            GUI.Label(new Rect(24f, 94f, 330f, 24f), "[1] 기준안  [2] 포켓14 강건안");
         }
 
         private readonly struct VehicleVisualState
