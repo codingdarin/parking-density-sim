@@ -15,6 +15,7 @@ namespace ParkingSim.Core.V2
         public int FinalVehicleCount { get; set; }
         public int ActiveRobotCount { get; set; }
         public int[] FinalVehicleSlots { get; set; }
+        public (int X, int Y)[] FinalRobotPositions { get; set; }
         public List<string> JointActions { get; } = new List<string>();
         public int RotationActions => JointActions.Sum(a => CountToken(a, "rotate"));
 
@@ -123,6 +124,7 @@ namespace ParkingSim.Core.V2
                     result.Success = true;
                     result.Ticks = depth;
                     result.FinalVehicleSlots = (int[])current.VehicleSlots.Clone();
+                    result.FinalRobotPositions = current.Robots.Select(r => (r.X, r.Y)).ToArray();
                     result.FinalVehicleCount = current.VehicleSlots.Length;
                     Reconstruct(startKey, goalKey, parents, result.JointActions);
                     return result;
@@ -227,6 +229,7 @@ namespace ParkingSim.Core.V2
                     result.Success = true;
                     result.Ticks = depth;
                     result.FinalVehicleSlots = (int[])current.VehicleSlots.Clone();
+                    result.FinalRobotPositions = current.Robots.Select(r => (r.X, r.Y)).ToArray();
                     result.FinalVehicleCount = current.VehicleSlots.Length;
                     Reconstruct(startKey, currentKey, parents, result.JointActions);
                     return result;
@@ -440,6 +443,11 @@ namespace ParkingSim.Core.V2
             }
 
             var parkedCells = new HashSet<(int, int)>();
+            foreach (var pose in problem.FixedVehiclePoses)
+            {
+                parkedCells.Add((pose.X, pose.Y));
+                parkedCells.Add(pose.SecondCell);
+            }
             var occupiedSlots = new HashSet<int>();
             for (int v = 0; v < state.VehicleSlots.Length; v++)
             {

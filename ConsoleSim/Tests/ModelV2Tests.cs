@@ -20,7 +20,9 @@ namespace ParkingSim.Tests
             passed += Run("⑧ 휴리스틱 최적성 — 정확해 격차 10% 이내·확장 감소", TestWeightedOptimalityGap);
             passed += Run("⑨ 규모 경계 — 차량3대도 정확 정보탐색으로 해결", TestThreeVehicleExact);
             passed += Run("⑩ 10% bounded 탐색 — 소형 실제 격차·상한 검증", TestBoundedSearch);
-            Console.WriteLine($"\nV2 타당성 게이트 {passed}/10 통과");
+            passed += Run("⑪ rolling 분해 — 한 창에서는 전역 exact와 동일", TestRollingMatchesExact);
+            passed += Run("⑫ rolling 확장 — 차량6대·유한 슬롯6면 보존", TestRollingSixVehicles);
+            Console.WriteLine($"\nV2 타당성 게이트 {passed}/12 통과");
             return passed;
         }
 
@@ -158,6 +160,36 @@ namespace ParkingSim.Tests
                     $"   차량{n}: exact={exact.Ticks}/{exact.ExpandedStates:N0}, " +
                     $"bounded={bounded.Ticks}/{bounded.ExpandedStates:N0}, gap={gap:P1}");
             }
+        }
+
+        private static void TestRollingMatchesExact()
+        {
+            var problem = V2ProblemFactory.LineProblem(2);
+            var exact = ExactEmergencySolverV2.SolveWeighted(
+                problem, heuristicWeight: 1, maxExpansions: 500000);
+            var rolling = RollingBatchPlannerV2.Solve(
+                problem, batchSize: 4, maxExpansionsPerBatch: 500000);
+            Assert(exact.Success && rolling.Success, "exact/rolling 비교 실패");
+            Assert(rolling.TotalTicks == exact.Ticks,
+                $"한 창인데 exact와 다름: exact={exact.Ticks}, rolling={rolling.TotalTicks}");
+            Assert(rolling.FinalStagingSlotIds.Distinct().Count() == 2,
+                "rolling 결과가 슬롯을 중복 사용");
+        }
+
+        private static void TestRollingSixVehicles()
+        {
+            var rolling = RollingBatchPlannerV2.Solve(
+                V2ProblemFactory.LineProblem(6),
+                batchSize: 3,
+                maxExpansionsPerBatch: 1000000);
+            Assert(rolling.Success, rolling.FailReason);
+            Assert(rolling.VehicleCount == 6, "rolling 차량 수 불일치");
+            Assert(rolling.FinalStagingSlotIds.Length == 6, "최종 적치 차량 누락");
+            Assert(rolling.FinalStagingSlotIds.Distinct().Count() == 6, "최종 적치 슬롯 중복");
+            Assert(rolling.BatchSizes.SequenceEqual(new[] { 3, 3 }), "예상 3+3 창 분해가 아님");
+            Console.WriteLine(
+                $"   차량6대: {rolling.TotalTicks}틱, {string.Join("+", rolling.BatchSizes)}, " +
+                $"확장={rolling.ExpandedStates:N0}");
         }
 
         private static int Run(string name, Action test)

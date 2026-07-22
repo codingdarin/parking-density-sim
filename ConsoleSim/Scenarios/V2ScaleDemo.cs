@@ -5,6 +5,20 @@ namespace ParkingSim.Scenarios
 {
     public static class V2ScaleDemo
     {
+        public static void RunRolling(int vehicles)
+        {
+            if (vehicles < 2) vehicles = 2;
+            var rolling = RollingBatchPlannerV2.Solve(
+                V2ProblemFactory.LineProblem(vehicles),
+                batchSize: 3,
+                maxExpansionsPerBatch: 1000000);
+            Console.WriteLine("=== Model V2 rolling-horizon exact decomposition ===");
+            Console.WriteLine(
+                $"차량={vehicles}, 성공={rolling.Success}, makespan={rolling.TotalTicks}틱, " +
+                $"배치={rolling.BatchCount}[{string.Join("+", rolling.BatchSizes)}], 확장={rolling.ExpandedStates:N0}, " +
+                $"슬롯={rolling.FinalStagingSlotIds?.Length ?? 0}, 사유={rolling.FailReason ?? "유효해"}");
+        }
+
         public static void Run(int maxVehicles)
         {
             if (maxVehicles < 2) maxVehicles = 2;
@@ -31,7 +45,13 @@ namespace ParkingSim.Scenarios
                         $" {n,2}b | {(bounded.Success ? "성공" : "실패"),4} |" +
                         $" {(bounded.Success ? bounded.Ticks.ToString() + "틱" : "-"),8} |" +
                         $" {bounded.ExpandedStates,8:N0} | bounded≤10%: {bounded.FailReason ?? "해 발견"}");
-                    if (!bounded.Success) break;
+                    var rolling = RollingBatchPlannerV2.Solve(
+                        V2ProblemFactory.LineProblem(n), batchSize: 4, maxExpansionsPerBatch: 1000000);
+                    Console.WriteLine(
+                        $" {n,2}r | {(rolling.Success ? "성공" : "실패"),4} |" +
+                        $" {(rolling.Success ? rolling.TotalTicks.ToString() + "틱" : "-"),8} |" +
+                        $" {rolling.ExpandedStates,8:N0} | rolling {rolling.BatchCount}배치: {rolling.FailReason ?? "유효해"}");
+                    if (!rolling.Success) break;
                 }
             }
         }
