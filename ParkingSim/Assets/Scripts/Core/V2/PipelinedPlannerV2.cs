@@ -141,13 +141,15 @@ namespace ParkingSim.Core.V2
             EmergencyProblemV2 problem,
             int maxTick = 2000,
             int maxExpansionsPerPath = 200000,
-            int activeRobotCount = -1)
+            int activeRobotCount = -1,
+            int maxHighLevelCandidates = 1024)
         {
             if (problem == null) throw new ArgumentNullException(nameof(problem));
             if (activeRobotCount < 0) activeRobotCount = problem.RobotStarts.Count;
             if (activeRobotCount < 1 || activeRobotCount > problem.RobotStarts.Count)
                 throw new ArgumentOutOfRangeException(nameof(activeRobotCount));
-            const int maxHighLevelCandidates = 1024;
+            if (maxHighLevelCandidates < 1)
+                throw new ArgumentOutOfRangeException(nameof(maxHighLevelCandidates));
             var vehicles = Enumerable.Range(0, problem.VehicleCount).ToArray();
             var staging = Enumerable.Range(0, problem.Slots.Count)
                 .Where(s => problem.Slots[s].Kind == SlotKind.Staging).ToArray();
