@@ -13,6 +13,7 @@ namespace ParkingSim.Core.Emergency
         public int BetaCells { get; set; } = 4;      // β = 10m
         public int RobotCount { get; set; } = 4;     // 대기소 칸 수(= corridorStartX)로 상한 클램프
         public int MaxTick { get; set; } = 2000;
+        public int DwellTicks { get; set; } = 12;    // 하차 유예 창 G (30초) — 체이닝 하차 직렬화 창
     }
 
     public sealed class EmergencyResult
@@ -61,7 +62,7 @@ namespace ParkingSim.Core.Emergency
             int robotCount = Math.Max(1, Math.Min(cfg.RobotCount, lot.DepotCells.Count));
             var homes = lot.DepotCells.Take(robotCount).ToArray();
 
-            const int dwellTicks = 12; // 하차 유예 창 (30초) — 다음 출발이 이 안에서 이뤄짐
+            int dwellTicks = cfg.DwellTicks; // 하차 유예 창 G — 다음 출발이 이 안에서 이뤄짐
             var rt = new ReservationTable();
             var liftTicks = new Dictionary<int, int>();
             var pos = ((int X, int Y)[])homes.Clone();

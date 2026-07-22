@@ -52,14 +52,18 @@ namespace ParkingSim.Scenarios
 
         /// <summary>비상 1건 실행 → RunMetrics. 슬라이스 러너(D9SliceRunner)와 공유.
         /// ClearanceEvaluator가 grid를 변형하므로 실행마다 새 Build.</summary>
-        public static RunMetrics Execute(int lanes, double fire, bool pockets, int seed, int robots)
+        public static RunMetrics Execute(int lanes, double fire, bool pockets, int seed, int robots) =>
+            Execute(lanes, fire, pockets ? DemoPockets : new int[0], seed, robots);
+
+        /// <summary>명시적 포켓 위치 + 유예 창 G 버전 — 포켓 개수·G 민감도 스윕용.</summary>
+        public static RunMetrics Execute(int lanes, double fire, int[] pocketXs, int seed, int robots, int dwell = 12)
         {
             var lot = ParkingLayoutBuilder.Build(new LayoutConfig
             {
                 OccupiedLanes = lanes,
-                StagingPocketXs = pockets ? DemoPockets : new int[0],
+                StagingPocketXs = pocketXs,
             });
-            var cfg = new EmergencyConfig { FireMeters = fire, RobotCount = robots };
+            var cfg = new EmergencyConfig { FireMeters = fire, RobotCount = robots, DwellTicks = dwell };
             var plan = EmergencyPlanner.Plan(lot, cfg);
             var report = plan.Success ? ClearanceEvaluator.Evaluate(lot, plan) : null;
             return MetricsRecorder.FromEmergency(lot, cfg, plan, report, seed);
@@ -106,7 +110,7 @@ namespace ParkingSim.Scenarios
                 string verdict = !m.Success ? "실패" : (m.WithinBudget ? "✅" : "❌");
                 string clear = m.Success ? $"{m.ClearMinutes,7:0.0}" : "   —  ";
                 Console.WriteLine(
-                    $"{m.OccupiedLanes,3}  {m.FireMeters,5:0}m  {(m.PocketCount > 0 ? "有" : "無"),3}  {m.RobotCount,3}대 |" +
+                    $"{m.OccupiedLanes,3}  {m.FireMeters,5:0}m  {m.PocketCount,3}  {m.RobotCount,3}대 |" +
                     $"{clear}  {verdict,-4} {m.SectionCarCount,4}대 {m.Attempts,5}회 |" +
                     $"{m.EffectiveP,6:0.00} {m.Utilization,6:0.0%} |{m.DriveWaitFrac,5:0.0%}{m.DropWaitFrac,5:0.0%}{m.IdleFrac,5:0.0%} |" +
                     $"{m.EnvelopeSeconds / 60,7:0.0} {m.DeviationRatio,5:0.00}x");
