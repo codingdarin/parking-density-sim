@@ -29,6 +29,9 @@ namespace ParkingSim
                 case "sanity":
                     Environment.ExitCode = Tests.AdversarialTests.RunSanityCheck() ? 0 : 1;
                     break;
+                case "v2test":
+                    Environment.ExitCode = Tests.ModelV2Tests.RunAll() == 7 ? 0 : 1;
+                    break;
                 case "baseline":
                     Tests.AdversarialTests.RunNoCoordinationBaseline();
                     break;
@@ -66,7 +69,7 @@ namespace ParkingSim
                     break;
                 }
                 default:
-                    Console.WriteLine("사용법: [layout|carry|multi|test|sanity|baseline|emergency|batch|d9|normal] [점유 레인 0~3] [--all]");
+                    Console.WriteLine("사용법: [layout|carry|multi|test|sanity|v2test|baseline|emergency|batch|d9|normal] [점유 레인 0~3] [--all]");
                     break;
             }
         }
