@@ -31,10 +31,55 @@ namespace ParkingSim.Scenarios
             switch (slice)
             {
                 case "pocket": RunPocket(); break;
+                case "pcount": RunPocketCount(); break;
+                case "dwell": RunDwell(); break;
                 case "robot": RunRobot(); break;
                 case "reach": RunReach(); break;
                 default: RunAll(); break;
             }
+        }
+
+        // 포켓 개수 스윕 — 레인1·d100·로봇4 고정, 포켓 {1,2,4,8}개 균등 분산.
+        // 물음 하나: 하차대기가 포켓 수에 따라 계속 주는가, 어디서 포화하는가(= 유예 창 G의 하한).
+        private static void RunPocketCount()
+        {
+            var rows = new List<RunMetrics>();
+            foreach (int n in new[] { 1, 2, 4, 8 })
+                rows.Add(BatchRunner.Execute(lanes: 1, fire: 100, pocketXs: EvenPockets(n), seed: 0, robots: 4));
+            Emit("포켓 개수 스윕 (레인1·d100·로봇4 고정)", "d9_pocketcount", rows);
+        }
+
+        // 유예 창 G 민감도 — 레인1·d100·로봇4·포켓4 고정, G {6,12,18,24}.
+        // 물음 하나: 하차대기 하한이 G에 비례하는가 (= 포켓과 직교하는 병목이 G 때문인가).
+        private static void RunDwell()
+        {
+            var pk = EvenPockets(4);
+            Console.WriteLine("\n=== 유예 창 G 민감도 (레인1·d100·로봇4·포켓4 고정) ===");
+            Console.WriteLine("  G | 확보(분) 판정 | 주행D 하차D 유휴 | 유효p");
+            Console.WriteLine(new string('-', 56));
+            Directory.CreateDirectory("output");
+            var sb = new StringBuilder();
+            sb.AppendLine("dwell_g," + CsvFormat.EmergencyHeader());
+            foreach (int g in new[] { 6, 12, 18, 24 })
+            {
+                var m = BatchRunner.Execute(lanes: 1, fire: 100, pocketXs: pk, seed: 0, robots: 4, dwell: g);
+                string v = !m.Success ? "실패" : (m.WithinBudget ? "✅" : "❌");
+                Console.WriteLine(
+                    $"{g,3} | {m.ClearMinutes,7:0.0} {v,-3} |{m.DriveWaitFrac,5:0.0%}{m.DropWaitFrac,5:0.0%}{m.IdleFrac,5:0.0%} |{m.EffectiveP,6:0.00}");
+                sb.AppendLine(g + "," + CsvFormat.EmergencyRow(m));
+            }
+            File.WriteAllText(Path.Combine("output", "d9_dwell.csv"), sb.ToString());
+            Console.WriteLine("→ output/d9_dwell.csv");
+        }
+
+        /// <summary>통로 [8,48) 40셀에 n개 포켓을 균등 분산 (레이아웃 기본값: corridorStart=8, length=40).</summary>
+        private static int[] EvenPockets(int n)
+        {
+            const int start = 8, length = 40;
+            var xs = new int[n];
+            for (int i = 0; i < n; i++)
+                xs[i] = start + (int)((i + 0.5) * length / n);
+            return xs;
         }
 
         // 포켓 효과 — 레인2·로봇4 고정, d × 포켓{off,on}
