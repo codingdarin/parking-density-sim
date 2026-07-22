@@ -25,10 +25,17 @@ namespace ParkingSim.Core.Grid
         /// <summary>통로변 적치 포켓의 x 위치들 (북측, 싱크 진입 셀은 통로에 인접한 y)</summary>
         public IReadOnlyList<int> PocketXs { get; }
 
+        /// <summary>로봇 대기소(depot) 행의 y</summary>
+        public int DepotY { get; }
+
+        /// <summary>로봇 대기소 칸들 (진입구 서쪽 일렬, 각 칸 독립 접근). 개수 = 로봇 수용 상한</summary>
+        public IReadOnlyList<(int X, int Y)> DepotCells { get; }
+
         internal ParkingLot(
             GridMap grid, LayoutConfig config, List<Car> cars,
             int corridorStartX, int corridorEndX, int[] laneYs,
-            int stallCarCount, int corridorCarCount, int[] pocketXs)
+            int stallCarCount, int corridorCarCount, int[] pocketXs,
+            int depotY, (int X, int Y)[] depotCells)
         {
             Grid = grid;
             Config = config;
@@ -39,6 +46,8 @@ namespace ParkingSim.Core.Grid
             StallCarCount = stallCarCount;
             CorridorCarCount = corridorCarCount;
             PocketXs = pocketXs;
+            DepotY = depotY;
+            DepotCells = depotCells;
         }
     }
 
@@ -80,12 +89,18 @@ namespace ParkingSim.Core.Grid
                 for (int x = corridorStartX; x < corridorEndX; x++)
                     grid.SetType(x, y, CellType.Corridor);
             }
-            // 로봇 대기소(depot): 적치 블록·도로 아래 일렬 4칸 — 운반 흐름(통로 행, 적치 앵커)과
+            // 로봇 대기소(depot): 적치 블록·도로 아래 일렬 — 운반 흐름(통로 행, 적치 앵커)과
             // 겹치지 않고, 각 칸이 독립적으로 위쪽 통행로에 접해 서로를 봉쇄하지 않음
-            // (2×2 블록은 바깥 칸 주차가 안쪽 칸 출입로를 영구 봉쇄 — D6에서 실측된 결함)
+            // (2×2 블록은 바깥 칸 주차가 안쪽 칸 출입로를 영구 봉쇄 — D6에서 실측된 결함).
+            // 칸 수 = 진입구 서쪽 열 전부(x=0..corridorStartX-1) — 로봇 수용 상한 (D7 이후 로봇 대수 축).
             int depotY = StallDepth + config.CorridorLanes;
-            for (int x = 0; x < 4; x++)
+            int depotSlots = corridorStartX;
+            var depotCells = new (int X, int Y)[depotSlots];
+            for (int x = 0; x < depotSlots; x++)
+            {
                 grid.SetType(x, depotY, CellType.Road);
+                depotCells[x] = (x, depotY);
+            }
 
             var pocketSet = new HashSet<int>(config.StagingPocketXs ?? new int[0]);
             for (int x = corridorStartX; x < corridorEndX; x++)
@@ -123,7 +138,7 @@ namespace ParkingSim.Core.Grid
             var sortedPockets = new List<int>(pocketSet);
             sortedPockets.Sort();
             return new ParkingLot(grid, config, cars, corridorStartX, corridorEndX, laneYs,
-                stallCarCount, corridorCarCount, sortedPockets.ToArray());
+                stallCarCount, corridorCarCount, sortedPockets.ToArray(), depotY, depotCells);
         }
 
         private static void AddCar(GridMap grid, List<Car> cars, Car car)

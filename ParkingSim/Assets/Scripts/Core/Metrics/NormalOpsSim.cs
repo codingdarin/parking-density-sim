@@ -39,10 +39,8 @@ namespace ParkingSim.Core.Metrics
             var g = lot.Grid;
             var rng = new Random(seed);
 
-            int depotY = 2 + lot.Config.CorridorLanes;
-            var allHomes = new (int X, int Y)[] { (0, depotY), (1, depotY), (2, depotY), (3, depotY) };
-            robotCount = Math.Max(1, Math.Min(robotCount, allHomes.Length));
-            var homes = allHomes.Take(robotCount).ToArray();
+            robotCount = Math.Max(1, Math.Min(robotCount, lot.DepotCells.Count));
+            var homes = lot.DepotCells.Take(robotCount).ToArray();
 
             // 요청 대상: 통로 차량 중 requestCount대 (0 이하·초과면 전량), 시드 셔플로 선택
             var corridorCars = lot.Cars.Where(c => c.InCorridor).ToList();

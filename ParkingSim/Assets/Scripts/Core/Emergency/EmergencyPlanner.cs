@@ -11,7 +11,7 @@ namespace ParkingSim.Core.Emergency
     {
         public double FireMeters { get; set; }
         public int BetaCells { get; set; } = 4;      // β = 10m
-        public int RobotCount { get; set; } = 4;     // ≤ 4 (대기소 4칸)
+        public int RobotCount { get; set; } = 4;     // 대기소 칸 수(= corridorStartX)로 상한 클램프
         public int MaxTick { get; set; } = 2000;
     }
 
@@ -58,10 +58,8 @@ namespace ParkingSim.Core.Emergency
                 .ToList();
             var pockets = lot.PocketXs.Where(px => px < fireX).ToList(); // 화재 너머 적치 사용 불가
 
-            int depotY = 2 + lot.Config.CorridorLanes;
-            var allHomes = new (int X, int Y)[] { (0, depotY), (1, depotY), (2, depotY), (3, depotY) };
-            int robotCount = Math.Min(cfg.RobotCount, allHomes.Length);
-            var homes = allHomes.Take(robotCount).ToArray();
+            int robotCount = Math.Max(1, Math.Min(cfg.RobotCount, lot.DepotCells.Count));
+            var homes = lot.DepotCells.Take(robotCount).ToArray();
 
             const int dwellTicks = 12; // 하차 유예 창 (30초) — 다음 출발이 이 안에서 이뤄짐
             var rt = new ReservationTable();
