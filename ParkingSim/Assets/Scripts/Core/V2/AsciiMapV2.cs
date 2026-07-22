@@ -155,5 +155,19 @@ namespace ParkingSim.Core.V2
             "..................",
             "..................",
             "|..|I.I.I.I.I.I.I.");
+
+        public static readonly AsciiMapV2 ApartmentConstrainedPrototype = new AsciiMapV2(
+            "apartment-constrained-prototype",
+            "####################",
+            "####################",
+            "....................",
+            "IIIIIIIIIIIIIIIIIIII",
+            ".....#......#.......",
+            "1..2......!!!!>!!!!!",
+            "........#.!!!!!#!!^!",
+            "....................",
+            ".....IIIIIIIIIIIIIII",
+            "....################",
+            "|..|################");
     }
 }

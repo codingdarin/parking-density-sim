@@ -76,6 +76,27 @@ namespace ParkingSim.Scenarios
                                   $"s{mission.DestinationSlot}, lift={mission.LiftTick}, drop={mission.DropTick}");
         }
 
+        public static void RunPipelineConstrainedApartment()
+        {
+            EmergencyProblemV2 map = V2MapCatalog.ApartmentConstrainedPrototype.Build();
+            var scenario = new EmergencyScenarioV2(
+                "apartment-constrained-clearance",
+                fireCell: (19, 5),
+                requiredClearanceCells: map.CopyClearanceCells());
+            EmergencyScenarioBuildResultV2 built = scenario.Build(map);
+            Console.WriteLine("=== apartment-constrained-prototype operational gate ===");
+            Console.WriteLine($"scenario={built.Success}, selected={built.SelectedVehicleCount}, " +
+                              $"fixed={map.FixedVehiclePoses.Count}, reason={built.FailReason ?? "valid"}");
+            if (!built.Success) return;
+            PipelinedPlanResultV2 candidate = PipelinedPrioritizedPlannerV2.Solve(built.Problem);
+            Console.WriteLine($"pipeline={candidate.Success}, ticks={candidate.Ticks}, " +
+                              $"expanded={candidate.ExpandedStates:N0}, valid={candidate.PhysicallyValid}, " +
+                              $"reason={candidate.FailReason ?? "valid"}");
+            foreach (PipelinedMissionV2 mission in candidate.Missions)
+                Console.WriteLine($"r{mission.RobotIndex + 1} v{mission.VehicleIndex + 1} → " +
+                                  $"s{mission.DestinationSlot}, lift={mission.LiftTick}, drop={mission.DropTick}");
+        }
+
         private static void PrintQualityReport(string candidateName, PlannerQualityReportV2 report)
         {
             Console.WriteLine("=== Model V2 운영 후보 품질 게이트: " + candidateName + " vs 전역 exact ===");
