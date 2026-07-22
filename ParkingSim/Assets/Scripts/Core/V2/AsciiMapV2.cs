@@ -6,7 +6,7 @@ namespace ParkingSim.Core.V2
 {
     /// <summary>
     /// 위에서 아래 순서의 ASCII 행으로 V2 맵을 정의한다.
-    /// # 벽, . 바닥, ! 확보구간, 1/2 로봇 시작점,
+    /// # 벽, . 바닥, ! 확보구간, 1~8 로봇 시작점,
     /// &gt;/^ 가로/세로 방해차 슬롯, =/| 가로/세로 적치 슬롯,
     /// -/I 가로/세로 고정 차량 앵커다. 모든 차량 기호는 1×2 pose의 첫 셀이다.
     /// </summary>
@@ -36,7 +36,7 @@ namespace ParkingSim.Core.V2
             var blocking = new List<VehiclePose>();
             var staging = new List<VehiclePose>();
             var fixedVehicles = new List<VehiclePose>();
-            var starts = new (int X, int Y)?[2];
+            var starts = new (int X, int Y)?[8];
             var clearance = new HashSet<(int X, int Y)>();
 
             for (int row = 0; row < Height; row++)
@@ -51,8 +51,10 @@ namespace ParkingSim.Core.V2
                     switch (symbol)
                     {
                         case '!': clearance.Add((x, y)); break;
-                        case '1': SetRobotStart(starts, 0, x, y); break;
-                        case '2': SetRobotStart(starts, 1, x, y); break;
+                        case '1': case '2': case '3': case '4':
+                        case '5': case '6': case '7': case '8':
+                            SetRobotStart(starts, symbol - '1', x, y);
+                            break;
                         case '>': AddBlocking(blocking, clearance, x, y, VehicleOrientation.Horizontal); break;
                         case '^': AddBlocking(blocking, clearance, x, y, VehicleOrientation.Vertical); break;
                         case '=': staging.Add(new VehiclePose(x, y, VehicleOrientation.Horizontal)); break;
@@ -63,8 +65,13 @@ namespace ParkingSim.Core.V2
                 }
             }
 
-            if (!starts[0].HasValue || !starts[1].HasValue)
-                throw new FormatException(Name + ": 로봇 시작점 1과 2가 각각 하나씩 필요함");
+            int robotCount = 0;
+            while (robotCount < starts.Length && starts[robotCount].HasValue) robotCount++;
+            if (robotCount == 0)
+                throw new FormatException(Name + ": 로봇 시작점 1이 필요함");
+            for (int i = robotCount; i < starts.Length; i++)
+                if (starts[i].HasValue)
+                    throw new FormatException(Name + ": 로봇 시작점 번호는 1부터 연속이어야 함");
 
             var slots = new List<ParkingSlotV2>();
             foreach (VehiclePose pose in blocking)
@@ -78,7 +85,7 @@ namespace ParkingSim.Core.V2
                 floor,
                 slots,
                 Enumerable.Range(0, blocking.Count),
-                new[] { starts[0].Value, starts[1].Value },
+                starts.Take(robotCount).Select(start => start.Value),
                 clearance,
                 fixedVehicles,
                 timing);
@@ -107,7 +114,7 @@ namespace ParkingSim.Core.V2
         private static bool IsSupported(char symbol)
         {
             return symbol == '#' || symbol == '.' || symbol == '!' ||
-                   symbol == '1' || symbol == '2' ||
+                   (symbol >= '1' && symbol <= '8') ||
                    symbol == '>' || symbol == '^' || symbol == '=' || symbol == '|' ||
                    symbol == '-' || symbol == 'I';
         }

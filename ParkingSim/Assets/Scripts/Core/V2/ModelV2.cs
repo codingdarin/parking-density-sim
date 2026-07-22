@@ -129,8 +129,8 @@ namespace ParkingSim.Core.V2
             Timing = timing ?? new OperationTimingV2();
             FireCell = fireCell;
 
-            if (RobotStarts.Count != 2)
-                throw new ArgumentException("V2 정확해 오라클은 우선 로봇 2대만 지원");
+            if (RobotStarts.Count < 1)
+                throw new ArgumentException("로봇 시작점이 하나 이상 필요함");
             if (RobotStarts.Distinct().Count() != RobotStarts.Count)
                 throw new ArgumentException("로봇 시작점은 서로 달라야 함");
             if (InitialVehicleSlots.Distinct().Count() != InitialVehicleSlots.Count)

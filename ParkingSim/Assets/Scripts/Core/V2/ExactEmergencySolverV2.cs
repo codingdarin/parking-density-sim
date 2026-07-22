@@ -121,6 +121,7 @@ namespace ParkingSim.Core.V2
             EmergencyProblemV2 problem, int maxExpansions = 500000,
             int activeRobotCount = 2, bool captureTimeline = false)
         {
+            ValidateOracleProblem(problem);
             if (activeRobotCount < 1 || activeRobotCount > 2)
                 throw new ArgumentOutOfRangeException(nameof(activeRobotCount));
             var result = new ExactEmergencyResultV2
@@ -229,6 +230,7 @@ namespace ParkingSim.Core.V2
             EmergencyProblemV2 problem, int heuristicNumerator, int heuristicDenominator,
             int maxExpansions, int activeRobotCount, bool captureTimeline)
         {
+            ValidateOracleProblem(problem);
             if (heuristicNumerator < heuristicDenominator || heuristicDenominator < 1)
                 throw new ArgumentOutOfRangeException(nameof(heuristicNumerator));
             if (activeRobotCount < 1 || activeRobotCount > 2)
@@ -310,6 +312,14 @@ namespace ParkingSim.Core.V2
                 : "해 없음";
             result.FinalVehicleCount = problem.VehicleCount;
             return result;
+        }
+
+        private static void ValidateOracleProblem(EmergencyProblemV2 problem)
+        {
+            if (problem == null) throw new ArgumentNullException(nameof(problem));
+            if (problem.RobotStarts.Count < 2)
+                throw new ArgumentException(
+                    "정확해 오라클은 비활성 유닛을 포함한 시작점 2개가 필요함", nameof(problem));
         }
 
         private static int Heuristic(EmergencyProblemV2 problem, State state, int activeRobotCount)

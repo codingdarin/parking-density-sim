@@ -33,8 +33,13 @@ namespace ParkingSim.Core.V2
         public bool PhysicallyValid { get; set; }
         public int[] FinalVehicleSlots { get; set; }
         public List<PipelinedMissionV2> Missions { get; } = new List<PipelinedMissionV2>();
-        public List<TimedRobotStateV2>[] RobotTimelines { get; } =
-            { new List<TimedRobotStateV2>(), new List<TimedRobotStateV2>() };
+        public List<TimedRobotStateV2>[] RobotTimelines { get; }
+
+        public PipelinedPlanResultV2(int robotCount = 0)
+        {
+            RobotTimelines = Enumerable.Range(0, robotCount)
+                .Select(_ => new List<TimedRobotStateV2>()).ToArray();
+        }
     }
 
     /// <summary>
@@ -135,9 +140,13 @@ namespace ParkingSim.Core.V2
         public static PipelinedPlanResultV2 Solve(
             EmergencyProblemV2 problem,
             int maxTick = 2000,
-            int maxExpansionsPerPath = 200000)
+            int maxExpansionsPerPath = 200000,
+            int activeRobotCount = -1)
         {
             if (problem == null) throw new ArgumentNullException(nameof(problem));
+            if (activeRobotCount < 0) activeRobotCount = problem.RobotStarts.Count;
+            if (activeRobotCount < 1 || activeRobotCount > problem.RobotStarts.Count)
+                throw new ArgumentOutOfRangeException(nameof(activeRobotCount));
             const int maxHighLevelCandidates = 1024;
             var vehicles = Enumerable.Range(0, problem.VehicleCount).ToArray();
             var staging = Enumerable.Range(0, problem.Slots.Count)
@@ -180,7 +189,8 @@ namespace ParkingSim.Core.V2
             {
                 tried++;
                 PipelinedPlanResultV2 candidate = SolveConfigured(
-                    problem, vehicleOrder, destinationOrder, maxTick, maxExpansionsPerPath);
+                    problem, vehicleOrder, destinationOrder, maxTick, maxExpansionsPerPath,
+                    activeRobotCount);
                 totalExpanded += candidate.ExpandedStates;
                 if (!candidate.Success)
                 {
@@ -196,9 +206,10 @@ namespace ParkingSim.Core.V2
             IReadOnlyList<int> vehicleOrder,
             IReadOnlyList<int> destinationOrder,
             int maxTick,
-            int maxExpansionsPerPath)
+            int maxExpansionsPerPath,
+            int activeRobotCount)
         {
-            var result = new PipelinedPlanResultV2();
+            var result = new PipelinedPlanResultV2(activeRobotCount);
             if (problem.StagingCapacity < problem.VehicleCount)
             {
                 result.FailReason = $"적치 용량 부족: 차량 {problem.VehicleCount}대 > 슬롯 {problem.StagingCapacity}면";
@@ -213,8 +224,8 @@ namespace ParkingSim.Core.V2
                 };
 
             var reservations = new TemporalReservations();
-            var robotStates = new TimedRobotStateV2[2];
-            for (int r = 0; r < 2; r++)
+            var robotStates = new TimedRobotStateV2[activeRobotCount];
+            for (int r = 0; r < activeRobotCount; r++)
             {
                 robotStates[r] = NewState(0, problem.RobotStarts[r].X, problem.RobotStarts[r].Y,
                     false, -1, VehicleOrientation.Horizontal);
@@ -228,7 +239,8 @@ namespace ParkingSim.Core.V2
 
             while (remaining.Count > 0)
             {
-                int robot = robotStates[0].Tick <= robotStates[1].Tick ? 0 : 1;
+                int robot = Enumerable.Range(0, activeRobotCount)
+                    .OrderBy(r => robotStates[r].Tick).ThenBy(r => r).First();
                 int missionIndex = result.Missions.Count;
                 int forcedVehicle = vehicleOrder[missionIndex];
                 int forcedDestination = destinationOrder[missionIndex];
@@ -276,8 +288,9 @@ namespace ParkingSim.Core.V2
                 });
             }
 
-            // exact 기준과 동일하게 두 로봇 모두 확보구간 밖으로 빠져나와야 완료다.
-            foreach (int robot in new[] { 0, 1 }.OrderBy(r => robotStates[r].Tick))
+            // exact 기준과 동일하게 모든 활성 로봇이 확보구간 밖으로 빠져나와야 완료다.
+            foreach (int robot in Enumerable.Range(0, activeRobotCount)
+                         .OrderBy(r => robotStates[r].Tick))
             {
                 if (problem.IsClearanceCell(robotStates[robot].X, robotStates[robot].Y))
                 {
@@ -299,7 +312,7 @@ namespace ParkingSim.Core.V2
                 reservations.ReservePermanent(robotStates[robot]);
             }
 
-            result.Ticks = Math.Max(robotStates[0].Tick, robotStates[1].Tick);
+            result.Ticks = robotStates.Max(state => state.Tick);
             result.FinalVehicleSlots = new int[problem.VehicleCount];
             foreach (PipelinedMissionV2 mission in result.Missions)
                 result.FinalVehicleSlots[mission.VehicleIndex] = mission.DestinationSlot;
@@ -634,12 +647,15 @@ namespace ParkingSim.Core.V2
             for (int v = 0; v < schedules.Length; v++)
                 if (!schedules[v].Planned || schedules[v].DropTick > result.Ticks) return false;
 
+            if (result.RobotTimelines.Length < 1) return false;
             for (int tick = 0; tick <= result.Ticks; tick++)
             {
-                TimedRobotStateV2 r0 = StateAt(result.RobotTimelines[0], tick);
-                TimedRobotStateV2 r1 = StateAt(result.RobotTimelines[1], tick);
-                if (Cells(r0).Intersect(Cells(r1)).Any()) return false;
-                foreach (TimedRobotStateV2 robot in new[] { r0, r1 })
+                var current = result.RobotTimelines
+                    .Select(timeline => StateAt(timeline, tick)).ToArray();
+                for (int a = 0; a < current.Length; a++)
+                    for (int b = a + 1; b < current.Length; b++)
+                        if (Cells(current[a]).Intersect(Cells(current[b])).Any()) return false;
+                foreach (TimedRobotStateV2 robot in current)
                 {
                     if (!robot.Carrying) continue;
                     VehiclePose pose = new VehiclePose(robot.X, robot.Y, robot.Orientation);
@@ -647,14 +663,18 @@ namespace ParkingSim.Core.V2
                         !LoadedPoseFree(problem, pose, tick, robot.VehicleIndex, schedules)) return false;
                 }
                 if (tick == 0) continue;
-                TimedRobotStateV2 p0 = StateAt(result.RobotTimelines[0], tick - 1);
-                TimedRobotStateV2 p1 = StateAt(result.RobotTimelines[1], tick - 1);
-                if (Cells(r0).Intersect(Cells(p1)).Any() && Cells(r1).Intersect(Cells(p0)).Any()) return false;
+                var previous = result.RobotTimelines
+                    .Select(timeline => StateAt(timeline, tick - 1)).ToArray();
+                for (int a = 0; a < current.Length; a++)
+                    for (int b = a + 1; b < current.Length; b++)
+                        if (Cells(current[a]).Intersect(Cells(previous[b])).Any() &&
+                            Cells(current[b]).Intersect(Cells(previous[a])).Any()) return false;
             }
-            TimedRobotStateV2 end0 = StateAt(result.RobotTimelines[0], result.Ticks);
-            TimedRobotStateV2 end1 = StateAt(result.RobotTimelines[1], result.Ticks);
-            return !problem.IsClearanceCell(end0.X, end0.Y) &&
-                   !problem.IsClearanceCell(end1.X, end1.Y);
+            return result.RobotTimelines.All(timeline =>
+            {
+                TimedRobotStateV2 end = StateAt(timeline, result.Ticks);
+                return !problem.IsClearanceCell(end.X, end.Y);
+            });
         }
 
         private static TimedRobotStateV2 StateAt(List<TimedRobotStateV2> timeline, int tick)

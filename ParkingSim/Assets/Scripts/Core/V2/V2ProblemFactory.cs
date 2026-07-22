@@ -8,11 +8,14 @@ namespace ParkingSim.Core.V2
     public static class V2ProblemFactory
     {
         public static EmergencyProblemV2 LineProblem(
-            int vehicleCount, int stagingSlots = -1, OperationTimingV2 timing = null)
+            int vehicleCount, int stagingSlots = -1, OperationTimingV2 timing = null,
+            int robotStationCount = 2)
         {
             if (vehicleCount < 1) throw new ArgumentOutOfRangeException(nameof(vehicleCount));
             if (stagingSlots < 0) stagingSlots = vehicleCount;
             if (stagingSlots > vehicleCount) throw new ArgumentOutOfRangeException(nameof(stagingSlots));
+            if (robotStationCount < 1 || robotStationCount > 8)
+                throw new ArgumentOutOfRangeException(nameof(robotStationCount));
 
             int width = 4 + vehicleCount * 2;
             var slots = new List<ParkingSlotV2>();
@@ -25,13 +28,14 @@ namespace ParkingSim.Core.V2
 
             var clearance = new List<(int X, int Y)>();
             for (int x = 4; x < width; x++) clearance.Add((x, 2));
+            int[] stationXs = { 0, 2, 1, 3, 4, 5, 6, 7 };
             return new EmergencyProblemV2(
                 width: width,
                 height: 5,
                 floor: EmergencyProblemV2.FullFloor(width, 5),
                 slots: slots,
                 initialVehicleSlots: Enumerable.Range(0, vehicleCount),
-                robotStarts: new[] { (0, 4), (2, 4) },
+                robotStarts: stationXs.Take(robotStationCount).Select(x => (x, 4)),
                 clearanceCells: clearance,
                 timing: timing);
         }
