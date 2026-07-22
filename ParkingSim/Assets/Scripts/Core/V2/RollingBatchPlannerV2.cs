@@ -138,7 +138,8 @@ namespace ParkingSim.Core.V2
                 Enumerable.Range(0, batchVehicles.Count),
                 robotStarts,
                 clearanceCells: new (int X, int Y)[0],
-                fixedVehiclePoses: fixedVehicles);
+                fixedVehiclePoses: fixedVehicles,
+                timing: fullProblem.Timing);
         }
     }
 }

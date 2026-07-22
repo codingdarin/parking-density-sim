@@ -22,7 +22,9 @@ namespace ParkingSim.Tests
             passed += Run("⑩ 10% bounded 탐색 — 소형 실제 격차·상한 검증", TestBoundedSearch);
             passed += Run("⑪ rolling 분해 — 한 창에서는 전역 exact와 동일", TestRollingMatchesExact);
             passed += Run("⑫ rolling 확장 — 차량6대·유한 슬롯6면 보존", TestRollingSixVehicles);
-            Console.WriteLine($"\nV2 타당성 게이트 {passed}/12 통과");
+            passed += Run("⑬ 시간 의미 분리 — 물리 하차시간≠예약 안전버퍼", TestTimingSeparation);
+            passed += Run("⑭ 실제 블록 — 3셀 통로·벽·가로/세로 혼합 차량", TestParkingBlockGeometry);
+            Console.WriteLine($"\nV2 타당성 게이트 {passed}/14 통과");
             return passed;
         }
 
@@ -190,6 +192,49 @@ namespace ParkingSim.Tests
             Console.WriteLine(
                 $"   차량6대: {rolling.TotalTicks}틱, {string.Join("+", rolling.BatchSizes)}, " +
                 $"확장={rolling.ExpandedStates:N0}");
+        }
+
+        private static void TestTimingSeparation()
+        {
+            var baseline = ExactEmergencySolverV2.SolveWeighted(
+                V2ProblemFactory.LineProblem(2,
+                    timing: new OperationTimingV2(1, 1, 0)),
+                heuristicWeight: 1, maxExpansions: 500000);
+            var slowerDrop = ExactEmergencySolverV2.SolveWeighted(
+                V2ProblemFactory.LineProblem(2,
+                    timing: new OperationTimingV2(1, 3, 0)),
+                heuristicWeight: 1, maxExpansions: 500000);
+            var safetyOnly = ExactEmergencySolverV2.SolveWeighted(
+                V2ProblemFactory.LineProblem(2,
+                    timing: new OperationTimingV2(1, 1, 12)),
+                heuristicWeight: 1, maxExpansions: 500000);
+            Assert(baseline.Success && slowerDrop.Success && safetyOnly.Success, "시간 분리 탐색 실패");
+            Assert(slowerDrop.Ticks > baseline.Ticks,
+                "물리 하차시간 증가가 makespan에 반영되지 않음");
+            Assert(safetyOnly.Ticks == baseline.Ticks,
+                "예약 안전버퍼가 물리 exact makespan을 오염시킴");
+            Console.WriteLine(
+                $"   baseline={baseline.Ticks}, drop1→3={slowerDrop.Ticks}, " +
+                $"safety0→12={safetyOnly.Ticks}(불변)");
+        }
+
+        private static void TestParkingBlockGeometry()
+        {
+            var problem = V2ProblemFactory.ParkingBlockProblem();
+            Assert(!problem.IsFloor(1, 0), "주차면/벽이 열린 FullFloor로 남음");
+            Assert(problem.IsFloor(0, 0) && problem.IsFloor(0, 1), "세로 적치 베이가 닫힘");
+            Assert(problem.IsFloor(5, 2) && problem.IsFloor(5, 3) && problem.IsFloor(5, 4),
+                "폭 3셀 통로가 연속하지 않음");
+
+            var result = ExactEmergencySolverV2.SolveWeighted(
+                problem, heuristicWeight: 1, maxExpansions: 1000000);
+            Assert(result.Success, result.FailReason);
+            Assert(result.FinalVehicleCount == 2, "혼합 방향 차량 보존 실패");
+            Assert(result.FinalVehicleSlots.Distinct().Count() == 2, "실제 베이 중복 적치");
+            Assert(result.RotationActions >= 1, "가로 방해 차량의 세로 베이 회전 누락");
+            Console.WriteLine(
+                $"   parking-block: {result.Ticks}틱, 회전={result.RotationActions}, " +
+                $"확장={result.ExpandedStates:N0}");
         }
 
         private static int Run(string name, Action test)

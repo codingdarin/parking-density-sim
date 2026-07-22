@@ -7,7 +7,8 @@ namespace ParkingSim.Core.V2
     /// <summary>오라클·휴리스틱 회귀 비교용 결정론적 소형 문제군.</summary>
     public static class V2ProblemFactory
     {
-        public static EmergencyProblemV2 LineProblem(int vehicleCount, int stagingSlots = -1)
+        public static EmergencyProblemV2 LineProblem(
+            int vehicleCount, int stagingSlots = -1, OperationTimingV2 timing = null)
         {
             if (vehicleCount < 1) throw new ArgumentOutOfRangeException(nameof(vehicleCount));
             if (stagingSlots < 0) stagingSlots = vehicleCount;
@@ -31,7 +32,47 @@ namespace ParkingSim.Core.V2
                 slots: slots,
                 initialVehicleSlots: Enumerable.Range(0, vehicleCount),
                 robotStarts: new[] { (0, 4), (2, 4) },
-                clearanceCells: clearance);
+                clearanceCells: clearance,
+                timing: timing);
+        }
+
+        /// <summary>
+        /// 폭 3셀 통로(y=2..4), 북측 세로 적치 베이 2개, 나머지는 벽/주차면인 소형 블록.
+        /// 방해 차량은 가로 1대+세로 1대로 방향을 섞는다.
+        /// </summary>
+        public static EmergencyProblemV2 ParkingBlockProblem(OperationTimingV2 timing = null)
+        {
+            const int width = 12, height = 6;
+            var floor = new bool[width, height];
+            for (int x = 0; x < width; x++)
+                for (int y = 2; y <= 4; y++)
+                    floor[x, y] = true; // 규정 통로 추상화: 폭 3셀
+            foreach (int bayX in new[] { 0, 3 })
+                for (int y = 0; y <= 1; y++)
+                    floor[bayX, y] = true; // 실제 세로 적치 베이
+
+            var slots = new[]
+            {
+                new ParkingSlotV2(0, SlotKind.Blocking,
+                    new VehiclePose(6, 3, VehicleOrientation.Horizontal)),
+                new ParkingSlotV2(1, SlotKind.Blocking,
+                    new VehiclePose(9, 2, VehicleOrientation.Vertical)),
+                new ParkingSlotV2(2, SlotKind.Staging,
+                    new VehiclePose(0, 0, VehicleOrientation.Vertical)),
+                new ParkingSlotV2(3, SlotKind.Staging,
+                    new VehiclePose(3, 0, VehicleOrientation.Vertical)),
+            };
+            var clearance = new List<(int X, int Y)>();
+            for (int x = 4; x < width; x++)
+                for (int y = 2; y <= 4; y++)
+                    clearance.Add((x, y));
+
+            return new EmergencyProblemV2(
+                width, height, floor, slots,
+                initialVehicleSlots: new[] { 0, 1 },
+                robotStarts: new[] { (0, 4), (3, 4) },
+                clearanceCells: clearance,
+                timing: timing);
         }
     }
 }

@@ -16,6 +16,24 @@ namespace ParkingSim.Core.V2
         Staging,
     }
 
+    public sealed class OperationTimingV2
+    {
+        public int LiftServiceTicks { get; }
+        public int DropServiceTicks { get; }
+        /// <summary>제어/예약 안전여유. 물리 서비스시간과 분리하며 exact 물리 makespan에는 미반영.</summary>
+        public int SafetyBufferTicks { get; }
+
+        public OperationTimingV2(
+            int liftServiceTicks = 1, int dropServiceTicks = 1, int safetyBufferTicks = 0)
+        {
+            if (liftServiceTicks < 1 || dropServiceTicks < 1 || safetyBufferTicks < 0)
+                throw new ArgumentOutOfRangeException(nameof(liftServiceTicks));
+            LiftServiceTicks = liftServiceTicks;
+            DropServiceTicks = dropServiceTicks;
+            SafetyBufferTicks = safetyBufferTicks;
+        }
+    }
+
     /// <summary>차량 앵커+방향. 차량은 항상 1×2셀을 점유하며 소멸하지 않는다.</summary>
     public readonly struct VehiclePose : IEquatable<VehiclePose>
     {
@@ -79,6 +97,7 @@ namespace ParkingSim.Core.V2
         public IReadOnlyList<int> InitialVehicleSlots { get; }
         public IReadOnlyList<(int X, int Y)> RobotStarts { get; }
         public IReadOnlyList<VehiclePose> FixedVehiclePoses { get; }
+        public OperationTimingV2 Timing { get; }
         public int VehicleCount => InitialVehicleSlots.Count;
         public int StagingCapacity => Slots.Count(s => s.Kind == SlotKind.Staging);
 
@@ -88,7 +107,8 @@ namespace ParkingSim.Core.V2
             IEnumerable<int> initialVehicleSlots,
             IEnumerable<(int X, int Y)> robotStarts,
             IEnumerable<(int X, int Y)> clearanceCells,
-            IEnumerable<VehiclePose> fixedVehiclePoses = null)
+            IEnumerable<VehiclePose> fixedVehiclePoses = null,
+            OperationTimingV2 timing = null)
         {
             if (width <= 0 || height <= 0) throw new ArgumentOutOfRangeException(nameof(width));
             if (floor == null || floor.GetLength(0) != width || floor.GetLength(1) != height)
@@ -104,6 +124,7 @@ namespace ParkingSim.Core.V2
             FixedVehiclePoses = fixedVehiclePoses == null
                 ? new List<VehiclePose>()
                 : fixedVehiclePoses.ToList();
+            Timing = timing ?? new OperationTimingV2();
 
             if (RobotStarts.Count != 2)
                 throw new ArgumentException("V2 정확해 오라클은 우선 로봇 2대만 지원");

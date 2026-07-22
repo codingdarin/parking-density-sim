@@ -38,7 +38,8 @@ namespace ParkingSim.Core.V2
     /// </summary>
     public static class ExactEmergencySolverV2
     {
-        private enum ActionKind : byte { Wait, Move, Rotate, Lift, Drop }
+        private enum ActionKind : byte { Wait, Move, Rotate, Lift, Drop, ContinueService }
+        private enum ServiceKind : byte { None, Lift, Drop }
 
         private readonly struct ActionV2
         {
@@ -62,6 +63,10 @@ namespace ParkingSim.Core.V2
             public int Y;
             public VehicleOrientation Orientation;
             public int CarryVehicle;
+            public ServiceKind Service;
+            public int ServiceRemaining;
+            public int PendingVehicle;
+            public int PendingSlot;
         }
 
         private sealed class State
@@ -277,20 +282,46 @@ namespace ParkingSim.Core.V2
                 int location = state.VehicleSlots[v];
                 if (location >= 0 && problem.Slots[location].Kind == SlotKind.Staging) continue;
 
+                int servicingRobot = -1;
+                for (int r = 0; r < state.Robots.Length; r++)
+                    if (state.Robots[r].Service != ServiceKind.None &&
+                        state.Robots[r].PendingVehicle == v)
+                        servicingRobot = r;
+                if (servicingRobot >= 0)
+                {
+                    var sr = state.Robots[servicingRobot];
+                    if (sr.Service == ServiceKind.Drop)
+                    {
+                        mandatoryActions += sr.ServiceRemaining;
+                        longestSingleTask = Math.Max(longestSingleTask, sr.ServiceRemaining);
+                    }
+                    else
+                    {
+                        int task = sr.ServiceRemaining + problem.Timing.DropServiceTicks +
+                                   MinStagingDistance(problem,
+                                       new VehiclePose(sr.X, sr.Y, problem.Slots[sr.PendingSlot].Pose.Orientation),
+                                       state);
+                        mandatoryActions += sr.ServiceRemaining + problem.Timing.DropServiceTicks;
+                        longestSingleTask = Math.Max(longestSingleTask, task);
+                    }
+                    continue;
+                }
+
                 if (location < 0)
                 {
                     int r = -1 - location;
                     var robot = state.Robots[r];
-                    mandatoryActions += 1; // 최소 하차 1틱
-                    int task = 1 + MinStagingDistance(
+                    mandatoryActions += problem.Timing.DropServiceTicks;
+                    int task = problem.Timing.DropServiceTicks + MinStagingDistance(
                         problem, new VehiclePose(robot.X, robot.Y, robot.Orientation), state);
                     longestSingleTask = Math.Max(longestSingleTask, task);
                 }
                 else
                 {
                     var source = problem.Slots[location].Pose;
-                    mandatoryActions += 2; // 최소 리프트+하차 각 1틱
-                    int task = 2 + MinStagingDistance(problem, source, state);
+                    mandatoryActions += problem.Timing.LiftServiceTicks + problem.Timing.DropServiceTicks;
+                    int task = problem.Timing.LiftServiceTicks + problem.Timing.DropServiceTicks +
+                               MinStagingDistance(problem, source, state);
                     longestSingleTask = Math.Max(longestSingleTask, task);
                 }
             }
@@ -326,6 +357,10 @@ namespace ParkingSim.Core.V2
                     Y = problem.RobotStarts[r].Y,
                     Orientation = VehicleOrientation.Horizontal,
                     CarryVehicle = -1,
+                    Service = ServiceKind.None,
+                    ServiceRemaining = 0,
+                    PendingVehicle = -1,
+                    PendingSlot = -1,
                 };
             }
             return new State
@@ -341,6 +376,11 @@ namespace ParkingSim.Core.V2
             var robot = state.Robots[robotIndex];
             var actions = new List<ActionV2> { new ActionV2(ActionKind.Wait, 0, 0, "wait") };
             if (robotIndex >= activeRobotCount) return actions;
+            if (robot.Service != ServiceKind.None)
+                return new List<ActionV2>
+                {
+                    new ActionV2(ActionKind.ContinueService, 0, 0, "service")
+                };
             if (robot.CarryVehicle < 0)
             {
                 foreach (var d in new[] { (1, 0), (-1, 0), (0, 1), (0, -1) })
@@ -350,7 +390,7 @@ namespace ParkingSim.Core.V2
                 for (int v = 0; v < state.VehicleSlots.Length; v++)
                 {
                     int slotIndex = state.VehicleSlots[v];
-                    if (slotIndex < 0) continue;
+                    if (slotIndex < 0 || VehicleClaimed(state, v)) continue;
                     var pose = problem.Slots[slotIndex].Pose;
                     if (pose.X == robot.X && pose.Y == robot.Y)
                         actions.Add(new ActionV2(ActionKind.Lift, v, slotIndex, $"lift(v{v + 1})"));
@@ -367,7 +407,8 @@ namespace ParkingSim.Core.V2
 
                 for (int s = 0; s < problem.Slots.Count; s++)
                 {
-                    if (problem.Slots[s].Kind != SlotKind.Staging || SlotOccupied(state, s)) continue;
+                    if (problem.Slots[s].Kind != SlotKind.Staging ||
+                        SlotOccupied(state, s) || SlotClaimed(state, s)) continue;
                     if (pose.Equals(problem.Slots[s].Pose))
                         actions.Add(new ActionV2(ActionKind.Drop, s, 0, $"drop(s{s})"));
                 }
@@ -409,15 +450,27 @@ namespace ParkingSim.Core.V2
                     break;
                 case ActionKind.Lift:
                     if (robot.CarryVehicle >= 0 || state.VehicleSlots[action.A] != action.B) return false;
-                    robot.CarryVehicle = action.A;
-                    robot.Orientation = problem.Slots[action.B].Pose.Orientation;
-                    state.VehicleSlots[action.A] = -1 - robotIndex;
+                    robot.Service = ServiceKind.Lift;
+                    robot.ServiceRemaining = problem.Timing.LiftServiceTicks - 1;
+                    robot.PendingVehicle = action.A;
+                    robot.PendingSlot = action.B;
+                    if (robot.ServiceRemaining == 0)
+                        CompleteService(problem, state, robotIndex, ref robot);
                     break;
                 case ActionKind.Drop:
                     if (robot.CarryVehicle < 0 || SlotOccupied(state, action.A)) return false;
-                    state.VehicleSlots[robot.CarryVehicle] = action.A;
-                    robot.CarryVehicle = -1;
-                    robot.Orientation = VehicleOrientation.Horizontal;
+                    robot.Service = ServiceKind.Drop;
+                    robot.ServiceRemaining = problem.Timing.DropServiceTicks - 1;
+                    robot.PendingVehicle = robot.CarryVehicle;
+                    robot.PendingSlot = action.A;
+                    if (robot.ServiceRemaining == 0)
+                        CompleteService(problem, state, robotIndex, ref robot);
+                    break;
+                case ActionKind.ContinueService:
+                    if (robot.Service == ServiceKind.None || robot.ServiceRemaining <= 0) return false;
+                    robot.ServiceRemaining--;
+                    if (robot.ServiceRemaining == 0)
+                        CompleteService(problem, state, robotIndex, ref robot);
                     break;
                 default:
                     return false;
@@ -426,12 +479,34 @@ namespace ParkingSim.Core.V2
             return true;
         }
 
+        private static void CompleteService(
+            EmergencyProblemV2 problem, State state, int robotIndex, ref RobotState robot)
+        {
+            if (robot.Service == ServiceKind.Lift)
+            {
+                robot.CarryVehicle = robot.PendingVehicle;
+                robot.Orientation = problem.Slots[robot.PendingSlot].Pose.Orientation;
+                state.VehicleSlots[robot.PendingVehicle] = -1 - robotIndex;
+            }
+            else if (robot.Service == ServiceKind.Drop)
+            {
+                state.VehicleSlots[robot.PendingVehicle] = robot.PendingSlot;
+                robot.CarryVehicle = -1;
+                robot.Orientation = VehicleOrientation.Horizontal;
+            }
+            robot.Service = ServiceKind.None;
+            robot.PendingVehicle = -1;
+            robot.PendingSlot = -1;
+        }
+
         private static bool ValidState(EmergencyProblemV2 problem, State state)
         {
             // 적재 차량 방향은 리프트 직후 원래 슬롯 방향이어야 한다.
             for (int r = 0; r < 2; r++)
             {
                 var robot = state.Robots[r];
+                if (robot.Service == ServiceKind.Lift && robot.CarryVehicle >= 0) return false;
+                if (robot.Service == ServiceKind.Drop && robot.CarryVehicle < 0) return false;
                 if (robot.CarryVehicle >= 0 && state.VehicleSlots[robot.CarryVehicle] != -1 - r)
                     return false;
                 if (robot.CarryVehicle < 0)
@@ -511,6 +586,20 @@ namespace ParkingSim.Core.V2
             return false;
         }
 
+        private static bool VehicleClaimed(State state, int vehicle)
+        {
+            foreach (var robot in state.Robots)
+                if (robot.Service == ServiceKind.Lift && robot.PendingVehicle == vehicle) return true;
+            return false;
+        }
+
+        private static bool SlotClaimed(State state, int slot)
+        {
+            foreach (var robot in state.Robots)
+                if (robot.Service == ServiceKind.Drop && robot.PendingSlot == slot) return true;
+            return false;
+        }
+
         private static string Key(State state)
         {
             var sb = new StringBuilder();
@@ -519,7 +608,9 @@ namespace ParkingSim.Core.V2
                 var robot = state.Robots[r];
                 sb.Append(robot.X).Append(',').Append(robot.Y).Append(',')
                     .Append(robot.CarryVehicle >= 0 ? (int)robot.Orientation : 0).Append(',')
-                    .Append(robot.CarryVehicle).Append('|');
+                    .Append(robot.CarryVehicle).Append(',')
+                    .Append((int)robot.Service).Append(',').Append(robot.ServiceRemaining).Append(',')
+                    .Append(robot.PendingVehicle).Append(',').Append(robot.PendingSlot).Append('|');
             }
             foreach (int slot in state.VehicleSlots) sb.Append(slot).Append(',');
             return sb.ToString();
