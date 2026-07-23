@@ -30,7 +30,9 @@ namespace ParkingSim
                     Environment.ExitCode = Tests.AdversarialTests.RunSanityCheck() ? 0 : 1;
                     break;
                 case "v2test":
-                    Environment.ExitCode = Tests.ModelV2Tests.RunAll() == 35 ? 0 : 1;
+                    Environment.ExitCode =
+                        Tests.ModelV2Tests.RunAll() ==
+                        Tests.ModelV2Tests.ExpectedGateCount ? 0 : 1;
                     break;
                 case "v2accessgate":
                     Environment.ExitCode = Tests.ModelV2Tests.RunEmergencyAccessGate() == 2 ? 0 : 1;

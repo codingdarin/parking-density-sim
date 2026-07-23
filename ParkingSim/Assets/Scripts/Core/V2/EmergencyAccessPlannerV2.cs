@@ -87,7 +87,9 @@ namespace ParkingSim.Core.V2
             EmergencyProblemV2 baseProblem,
             IEnumerable<EmergencyAccessRouteV2> routes,
             int activeRobotCount,
-            int maxHighLevelCandidates = 8)
+            int maxHighLevelCandidates = 8,
+            int maxTick = 2000,
+            int maxExpansionsPerPath = 200000)
         {
             if (baseProblem == null) throw new ArgumentNullException(nameof(baseProblem));
             if (routes == null) throw new ArgumentNullException(nameof(routes));
@@ -115,7 +117,9 @@ namespace ParkingSim.Core.V2
                         plan = PipelinedPrioritizedPlannerV2.Solve(
                             scenario.Problem,
                             activeRobotCount: Math.Min(activeRobotCount, requiredVehicles),
-                            maxHighLevelCandidates: maxHighLevelCandidates);
+                            maxHighLevelCandidates: maxHighLevelCandidates,
+                            maxTick: maxTick,
+                            maxExpansionsPerPath: maxExpansionsPerPath);
                     }
                 }
                 candidates.Add(new EmergencyAccessCandidateResultV2

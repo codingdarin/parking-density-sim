@@ -150,6 +150,15 @@ namespace ParkingSim.Core.V2
                 throw new ArgumentOutOfRangeException(nameof(activeRobotCount));
             if (maxHighLevelCandidates < 1)
                 throw new ArgumentOutOfRangeException(nameof(maxHighLevelCandidates));
+            if (problem.StagingCapacity < problem.VehicleCount)
+            {
+                return new PipelinedPlanResultV2(activeRobotCount)
+                {
+                    FailReason =
+                        $"적치 용량 부족: 차량 {problem.VehicleCount}대 > " +
+                        $"슬롯 {problem.StagingCapacity}면",
+                };
+            }
             var vehicles = Enumerable.Range(0, problem.VehicleCount).ToArray();
             var staging = Enumerable.Range(0, problem.Slots.Count)
                 .Where(s => problem.Slots[s].Kind == SlotKind.Staging).ToArray();

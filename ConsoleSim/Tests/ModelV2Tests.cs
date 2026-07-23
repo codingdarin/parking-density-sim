@@ -7,6 +7,8 @@ namespace ParkingSim.Tests
 {
     public static class ModelV2Tests
     {
+        public const int ExpectedGateCount = 45;
+
         public static int RunAll()
         {
             int passed = 0;
@@ -45,7 +47,18 @@ namespace ParkingSim.Tests
             passed += Run("㉝ 포켓 강건성 — 14개 오프셋20종 모두 7분 통과", TestPocketLayoutRobustness);
             passed += Run("㉞ 핵심경로 — 최소 개통시간 경로 선택·전면 재배치 단축", TestEmergencyAccessRouteSelection);
             passed += Run("㉟ 지상 아파트형 — 2경로 선택·법정 전용구역 비점유", TestSurfaceApartmentAccessSelection);
-            Console.WriteLine($"\nV2 타당성 게이트 {passed}/35 통과");
+            passed += Run("㊱ 자동경로 — 지상형 수동36틱 재현·하부 선택", TestAutomaticSurfaceAccessSelection);
+            passed += Run("㊲ 자동경로 실패 — 중심선 경로 없음", TestAutomaticNoCenterline);
+            passed += Run("㊳ 자동경로 실패 — 중심선은 있으나 폭3 확보 불가", TestAutomaticInsufficientWidth);
+            passed += Run("㊴ 자동경로 실패 — 고정 차량이 모든 폭3 후보 차단", TestAutomaticFixedObstruction);
+            passed += Run("㊵ 자동경로 실패 — 유한 적치 용량 부족", TestAutomaticInsufficientCapacity);
+            passed += Run("㊶ 자동경로 실패 — 물리 로봇 계획 실패", TestAutomaticPhysicalPlanningFailure);
+            passed += Run("㊷ 자동경로 실패 — 중심선 탐색 상한 도달", TestAutomaticSearchLimit);
+            passed += Run("㊸ 자동경로 0틱 — 이미 열린 경로", TestAutomaticAlreadyClear);
+            passed += Run("㊹ 자동경로 중복 — 유사 후보 제거", TestAutomaticDuplicateRemoval);
+            passed += Run("㊺ 자동경로 재현 — 동일 후보 순서·결과", TestAutomaticReproducibility);
+            Console.WriteLine(
+                $"\nV2 타당성 게이트 {passed}/{ExpectedGateCount} 통과");
             return passed;
         }
 
@@ -641,6 +654,251 @@ namespace ParkingSim.Tests
             Console.WriteLine(
                 $"   하부={lower.Plan.Ticks}틱/3대, 상부={upper.Plan.Ticks}틱/2대, " +
                 $"선택={selected.Selected.Route.Name}, 전면={fullPlan.Ticks}틱/5대");
+        }
+
+        private static void TestAutomaticSurfaceAccessSelection()
+        {
+            SurfaceApartmentScenarioV2 scenario = SurfaceApartmentScenarioFactoryV2.Build();
+            AutomaticEmergencyAccessPlanResultV2 automatic =
+                EmergencyAccessRouteGeneratorV2.Solve(
+                    scenario.BaseProblem, (1, 5), (22, 5), activeRobotCount: 4);
+            Assert(automatic.Success, automatic.FailReason);
+            Assert(automatic.Generation.Routes.Count >= 2,
+                "지상형 맵에서 서로 다른 자동 후보 2개 이상을 생성하지 못함");
+            EmergencyAccessCandidateResultV2 lower = automatic.Plan.Candidates
+                .SingleOrDefault(candidate =>
+                    candidate.Success &&
+                    candidate.Scenario.SelectedVehicleCount == 3 &&
+                    candidate.Plan.Ticks == 36);
+            EmergencyAccessCandidateResultV2 upper = automatic.Plan.Candidates
+                .SingleOrDefault(candidate =>
+                    candidate.Success &&
+                    candidate.Scenario.SelectedVehicleCount == 2 &&
+                    candidate.Plan.Ticks == 39);
+            Assert(lower != null, "자동 후보가 수동 하부 기준 3대/36틱을 재현하지 못함");
+            Assert(upper != null, "자동 후보가 수동 상부 기준 2대/39틱을 재현하지 못함");
+            Assert(automatic.Plan.Selected == lower,
+                "자동 선택기가 차량이 적은 상부보다 빠른 하부를 선택하지 않음");
+
+            EmergencyAccessPlanResultV2 manual = EmergencyAccessPlannerV2.Solve(
+                scenario.BaseProblem, scenario.Routes, activeRobotCount: 4);
+            Assert(manual.Success && manual.Selected.Plan.Ticks == 36,
+                "기존 수동 후보 36틱 기준이 깨짐");
+            Assert(automatic.Plan.Selected.Plan.Ticks == manual.Selected.Plan.Ticks,
+                "자동 최선과 기존 수동 최선의 개통시간이 다름");
+            Console.WriteLine(
+                $"   자동후보={automatic.Generation.Routes.Count}, " +
+                $"하부={lower.Plan.Ticks}틱/3대, 상부={upper.Plan.Ticks}틱/2대, " +
+                $"수동격차={automatic.Plan.Selected.Plan.Ticks - manual.Selected.Plan.Ticks}틱");
+        }
+
+        private static void TestAutomaticNoCenterline()
+        {
+            var floor = new bool[9, 5];
+            FillFloor(floor, 0, 2, 1, 3);
+            FillFloor(floor, 6, 8, 1, 3);
+            EmergencyProblemV2 problem = EmptyAccessProblem(
+                floor, new[] { (0, 1) });
+            EmergencyAccessRouteGenerationResultV2 result =
+                EmergencyAccessRouteGeneratorV2.Generate(
+                    problem, (1, 2), (7, 2));
+            Assert(!result.Success &&
+                   result.Failure == EmergencyAccessFailureV2.NoCenterline,
+                "단절 맵을 중심선 없음으로 반환하지 않음: " + result.FailReason);
+        }
+
+        private static void TestAutomaticInsufficientWidth()
+        {
+            var floor = new bool[7, 3];
+            for (int x = 0; x < 7; x++) floor[x, 1] = true;
+            EmergencyProblemV2 problem = EmptyAccessProblem(
+                floor, new[] { (0, 1) });
+            var options = new EmergencyAccessRouteGenerationOptionsV2
+            {
+                MaxCenterlineAttempts = 4,
+            };
+            EmergencyAccessRouteGenerationResultV2 result =
+                EmergencyAccessRouteGeneratorV2.Generate(
+                    problem, (0, 1), (6, 1), options);
+            Assert(!result.Success &&
+                   result.Failure == EmergencyAccessFailureV2.InsufficientWidth,
+                "1셀 통로를 폭3 부족으로 반환하지 않음: " + result.FailReason);
+            Assert(result.CenterlinesFound > 0 && result.WidthRejected > 0,
+                "중심선 존재와 폭 거부 진단값이 기록되지 않음");
+        }
+
+        private static void TestAutomaticFixedObstruction()
+        {
+            bool[,] floor = EmergencyProblemV2.FullFloor(7, 3);
+            EmergencyProblemV2 problem = EmptyAccessProblem(
+                floor,
+                new[] { (0, 1) },
+                new[] { new VehiclePose(3, 0, VehicleOrientation.Vertical) });
+            var options = new EmergencyAccessRouteGenerationOptionsV2
+            {
+                MaxCenterlineAttempts = 8,
+            };
+            EmergencyAccessRouteGenerationResultV2 result =
+                EmergencyAccessRouteGeneratorV2.Generate(
+                    problem, (0, 1), (6, 1), options);
+            Assert(!result.Success &&
+                   result.Failure == EmergencyAccessFailureV2.FixedObstruction,
+                "고정 차량 전면 차단을 구조 실패로 반환하지 않음: " + result.FailReason);
+            Assert(result.FixedObstructionRejected > 0,
+                "고정 차량으로 거부된 후보 수가 기록되지 않음");
+        }
+
+        private static void TestAutomaticInsufficientCapacity()
+        {
+            SurfaceApartmentScenarioV2 source = SurfaceApartmentScenarioFactoryV2.Build();
+            List<ParkingSlotV2> slots = source.BaseProblem.Slots
+                .Where(slot => slot.Kind == SlotKind.Blocking)
+                .Concat(source.BaseProblem.Slots
+                    .Where(slot => slot.Kind == SlotKind.Staging)
+                    .Take(1))
+                .ToList();
+            EmergencyProblemV2 problem = new EmergencyProblemV2(
+                source.BaseProblem.Width,
+                source.BaseProblem.Height,
+                source.BaseProblem.CopyFloor(),
+                slots,
+                Enumerable.Range(0, 5),
+                source.BaseProblem.RobotStarts,
+                Array.Empty<(int X, int Y)>(),
+                source.BaseProblem.FixedVehiclePoses,
+                source.BaseProblem.Timing,
+                source.BaseProblem.FireCell);
+            AutomaticEmergencyAccessPlanResultV2 result =
+                EmergencyAccessRouteGeneratorV2.Solve(
+                    problem, (1, 5), (22, 5), activeRobotCount: 4);
+            Assert(!result.Success &&
+                   result.Failure == EmergencyAccessFailureV2.InsufficientStagingCapacity,
+                "적치1면으로 모든 후보가 막힌 상황을 용량 부족으로 반환하지 않음: " +
+                result.FailReason);
+        }
+
+        private static void TestAutomaticPhysicalPlanningFailure()
+        {
+            SurfaceApartmentScenarioV2 scenario = SurfaceApartmentScenarioFactoryV2.Build();
+            AutomaticEmergencyAccessPlanResultV2 result =
+                EmergencyAccessRouteGeneratorV2.Solve(
+                    scenario.BaseProblem,
+                    (1, 5),
+                    (22, 5),
+                    activeRobotCount: 4,
+                    maxTick: 1);
+            Assert(!result.Success &&
+                   result.Failure == EmergencyAccessFailureV2.PhysicalPlanningFailed,
+                "물리 계획 실패를 명시적 결과로 반환하지 않음: " + result.FailReason);
+            Assert(result.Plan != null && result.Plan.Candidates.All(candidate =>
+                    candidate.Plan != null && !candidate.Plan.Success),
+                "후보별 물리 계획 실패가 보존되지 않음");
+        }
+
+        private static void TestAutomaticSearchLimit()
+        {
+            SurfaceApartmentScenarioV2 scenario = SurfaceApartmentScenarioFactoryV2.Build();
+            var options = new EmergencyAccessRouteGenerationOptionsV2
+            {
+                MaxSearchExpansions = 1,
+            };
+            EmergencyAccessRouteGenerationResultV2 result =
+                EmergencyAccessRouteGeneratorV2.Generate(
+                    scenario.BaseProblem, (1, 5), (22, 5), options);
+            Assert(!result.Success &&
+                   result.Failure == EmergencyAccessFailureV2.SearchLimitReached,
+                "탐색 상한 도달을 명시적 결과로 반환하지 않음: " + result.FailReason);
+            Assert(result.SearchLimitReached && result.SearchExpansions == 1,
+                "탐색 상한 진단값 불일치");
+        }
+
+        private static void TestAutomaticAlreadyClear()
+        {
+            EmergencyProblemV2 problem = EmptyAccessProblem(
+                EmergencyProblemV2.FullFloor(8, 5),
+                new[] { (0, 0), (1, 0) });
+            AutomaticEmergencyAccessPlanResultV2 result =
+                EmergencyAccessRouteGeneratorV2.Solve(
+                    problem, (1, 2), (6, 2), activeRobotCount: 2);
+            Assert(result.Success, result.FailReason);
+            Assert(result.Plan.Selected.Scenario.SelectedVehicleCount == 0 &&
+                   result.Plan.Selected.Plan.Ticks == 0,
+                "이미 열린 경로를 0대·0틱으로 반환하지 않음");
+        }
+
+        private static void TestAutomaticDuplicateRemoval()
+        {
+            EmergencyProblemV2 problem = EmptyAccessProblem(
+                EmergencyProblemV2.FullFloor(7, 3),
+                new[] { (0, 1) });
+            var options = new EmergencyAccessRouteGenerationOptionsV2
+            {
+                MaxCenterlineAttempts = 4,
+                DiversificationPenalty = 0,
+            };
+            EmergencyAccessRouteGenerationResultV2 result =
+                EmergencyAccessRouteGeneratorV2.Generate(
+                    problem, (0, 1), (6, 1), options);
+            Assert(result.Success, result.FailReason);
+            Assert(result.Routes.Count == 1 && result.DuplicateRejected == 3,
+                $"동일 중심선 중복 제거 불일치: 후보{result.Routes.Count}, " +
+                $"중복{result.DuplicateRejected}");
+        }
+
+        private static void TestAutomaticReproducibility()
+        {
+            SurfaceApartmentScenarioV2 scenario = SurfaceApartmentScenarioFactoryV2.Build();
+            AutomaticEmergencyAccessPlanResultV2 first =
+                EmergencyAccessRouteGeneratorV2.Solve(
+                    scenario.BaseProblem, (1, 5), (22, 5), activeRobotCount: 4);
+            AutomaticEmergencyAccessPlanResultV2 repeated =
+                EmergencyAccessRouteGeneratorV2.Solve(
+                    scenario.BaseProblem, (1, 5), (22, 5), activeRobotCount: 4);
+            Assert(first.Success && repeated.Success,
+                first.FailReason ?? repeated.FailReason);
+            Assert(first.Generation.Routes.Count == repeated.Generation.Routes.Count,
+                "동일 입력의 자동 후보 수가 달라짐");
+            for (int index = 0; index < first.Generation.Routes.Count; index++)
+            {
+                EmergencyAccessRouteV2 left = first.Generation.Routes[index];
+                EmergencyAccessRouteV2 right = repeated.Generation.Routes[index];
+                Assert(left.Name == right.Name &&
+                       left.RequiredCells.SequenceEqual(right.RequiredCells),
+                    $"동일 입력의 후보 {index} 이름·순서·셀 집합이 달라짐");
+            }
+            Assert(first.Plan.Selected.Route.Name == repeated.Plan.Selected.Route.Name &&
+                   first.Plan.Selected.Plan.Ticks == repeated.Plan.Selected.Plan.Ticks &&
+                   first.Plan.Selected.Scenario.SelectedVehicleCount ==
+                   repeated.Plan.Selected.Scenario.SelectedVehicleCount,
+                "동일 입력의 최종 자동 선택 결과가 달라짐");
+        }
+
+        private static EmergencyProblemV2 EmptyAccessProblem(
+            bool[,] floor,
+            IEnumerable<(int X, int Y)> robotStarts,
+            IEnumerable<VehiclePose> fixedVehicles = null)
+        {
+            return new EmergencyProblemV2(
+                floor.GetLength(0),
+                floor.GetLength(1),
+                floor,
+                Array.Empty<ParkingSlotV2>(),
+                Array.Empty<int>(),
+                robotStarts,
+                Array.Empty<(int X, int Y)>(),
+                fixedVehicles ?? Array.Empty<VehiclePose>());
+        }
+
+        private static void FillFloor(
+            bool[,] floor,
+            int minX,
+            int maxX,
+            int minY,
+            int maxY)
+        {
+            for (int x = minX; x <= maxX; x++)
+                for (int y = minY; y <= maxY; y++)
+                    floor[x, y] = true;
         }
 
         private static EmergencyProblemV2 EmergencyAccessTestProblem()
