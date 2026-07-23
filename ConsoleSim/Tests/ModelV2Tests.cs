@@ -7,7 +7,7 @@ namespace ParkingSim.Tests
 {
     public static class ModelV2Tests
     {
-        public const int ExpectedGateCount = 48;
+        public const int ExpectedGateCount = 51;
 
         public static int RunAll()
         {
@@ -60,6 +60,9 @@ namespace ParkingSim.Tests
             passed += Run("㊻ 적치 토지회계 — 실제사용과 상시전용 비용 분리", TestStagingLandAccounting);
             passed += Run("㊼ 포켓 토지회계 — 비주차6·주차전용14·net α6", TestPocketLandAccounting);
             passed += Run("㊽ 토지회계 방어 — 미확인·중복·외부슬롯·실패계획", TestStagingLandAccountingGuards);
+            passed += Run("㊾ 현실시간 보정 — 공개사양 서비스틱·양자화", TestPublishedTimeCalibration);
+            passed += Run("㊿ 현실시간 지상형 — 1·2·3m/s 자동경로 물리 재계획", TestCalibratedSurfaceAccess);
+            passed += Run("51 현실시간 포켓14 — 서비스 하한으로 7분 실패", TestCalibratedPocketFailure);
             Console.WriteLine(
                 $"\nV2 타당성 게이트 {passed}/{ExpectedGateCount} 통과");
             return passed;
@@ -446,6 +449,100 @@ namespace ParkingSim.Tests
                    failed.FailReason.Contains("물리 계획 실패") &&
                    !failed.VerifiedNetAlpha.HasValue,
                 "실패 계획에서 순이득을 주장함");
+        }
+
+        private static void TestPublishedTimeCalibration()
+        {
+            PhysicalTimeProfileV2 one = PublishedParkingRobotTimingV2.Create(1.0);
+            PhysicalTimeProfileV2 two = PublishedParkingRobotTimingV2.Create(2.0);
+            PhysicalTimeProfileV2 three = PublishedParkingRobotTimingV2.Create(3.0);
+            Assert(one.PickupServiceTicks == 36 && one.ReleaseServiceTicks == 24,
+                "1m/s 공개 서비스틱 36/24 불일치");
+            Assert(two.PickupServiceTicks == 72 && two.ReleaseServiceTicks == 48,
+                "2m/s 공개 서비스틱 72/48 불일치");
+            Assert(three.PickupServiceTicks == 108 && three.ReleaseServiceTicks == 72,
+                "3m/s 공개 서비스틱 108/72 불일치");
+            foreach (PhysicalTimeProfileV2 profile in new[] { one, two, three })
+            {
+                Assert(profile.QuantizedPickupSeconds >= profile.PickupServiceSeconds &&
+                       profile.QuantizedPickupSeconds - profile.PickupServiceSeconds <
+                       profile.MotionTickSeconds + 1e-9,
+                    profile.Name + " pickup 양자화 오차가 이동틱1개 이상");
+                Assert(profile.QuantizedReleaseSeconds >= profile.ReleaseServiceSeconds &&
+                       profile.QuantizedReleaseSeconds - profile.ReleaseServiceSeconds <
+                       profile.MotionTickSeconds + 1e-9,
+                    profile.Name + " release 양자화 오차가 이동틱1개 이상");
+                Assert(Math.Abs(
+                           profile.ServiceOnlyLowerBoundSeconds(20, 4) - 750.0) < 1e-9,
+                    profile.Name + " 차량20/4조 서비스 하한 750초 불일치");
+            }
+            Assert(ThrowsArgument(() => PublishedParkingRobotTimingV2.Create(3.1)),
+                "공개 최대속도3m/s 초과를 허용함");
+        }
+
+        private static void TestCalibratedSurfaceAccess()
+        {
+            foreach (double speed in new[] { 1.0, 2.0, 3.0 })
+            {
+                PhysicalTimeProfileV2 profile =
+                    PublishedParkingRobotTimingV2.Create(speed);
+                SurfaceApartmentScenarioV2 surface =
+                    SurfaceApartmentScenarioFactoryV2.Build(
+                        profile.CreateOperationTiming());
+                AutomaticEmergencyAccessPlanResultV2 result =
+                    EmergencyAccessRouteGeneratorV2.Solve(
+                        surface.BaseProblem,
+                        (1, 5),
+                        (22, 5),
+                        activeRobotCount: 4,
+                        maxTick: 5000);
+                Assert(result.Success, profile.Name + ": " + result.FailReason);
+                Assert(result.Plan.Selected.Scenario.SelectedVehicleCount == 3,
+                    profile.Name + "에서 하부3대 경로 선택이 바뀜");
+                EmergencyAccessCandidateResultV2 upper = result.Plan.Candidates
+                    .Single(candidate =>
+                        candidate.Success &&
+                        candidate.Scenario.SelectedVehicleCount == 2);
+                Assert(result.Plan.Selected.Plan.Ticks < upper.Plan.Ticks,
+                    profile.Name + "에서 하부가 상부보다 느려짐");
+                Console.WriteLine(
+                    $"   {speed:F0}m/s: 하부 " +
+                    $"{result.Plan.Selected.Plan.Ticks}틱/" +
+                    $"{profile.PlanSeconds(result.Plan.Selected.Plan.Ticks):F1}초, " +
+                    $"상부 {upper.Plan.Ticks}틱/" +
+                    $"{profile.PlanSeconds(upper.Plan.Ticks):F1}초");
+            }
+        }
+
+        private static void TestCalibratedPocketFailure()
+        {
+            foreach (double speed in new[] { 1.0, 2.0, 3.0 })
+            {
+                PhysicalTimeProfileV2 profile =
+                    PublishedParkingRobotTimingV2.Create(speed);
+                EmergencyScenarioBuildResultV2 built =
+                    CorridorScenarioFactoryV2.BuildEmergencyWithPockets(
+                        100,
+                        14,
+                        timing: profile.CreateOperationTiming(),
+                        pocketOffset: 14);
+                Assert(built.Success && built.SelectedVehicleCount == 20,
+                    profile.Name + ": " + built.FailReason);
+                PipelinedPlanResultV2 plan = PipelinedPrioritizedPlannerV2.Solve(
+                    built.Problem,
+                    activeRobotCount: 4,
+                    maxHighLevelCandidates: 8,
+                    maxTick: 5000);
+                Assert(plan.Success && plan.PhysicallyValid,
+                    profile.Name + ": " + plan.FailReason);
+                double seconds = profile.PlanSeconds(plan.Ticks);
+                double lowerBound = profile.ServiceOnlyLowerBoundSeconds(20, 4);
+                Assert(seconds >= lowerBound && seconds > 420.0,
+                    profile.Name + " 현실시간이 서비스 하한 또는 7분보다 짧음");
+                Console.WriteLine(
+                    $"   {speed:F0}m/s: {plan.Ticks}틱/{seconds:F1}초, " +
+                    $"서비스하한={lowerBound:F1}초, 7분 실패");
+            }
         }
 
         private static bool ThrowsArgument(Action action)
