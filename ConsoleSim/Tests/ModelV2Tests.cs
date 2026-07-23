@@ -7,7 +7,7 @@ namespace ParkingSim.Tests
 {
     public static class ModelV2Tests
     {
-        public const int ExpectedGateCount = 51;
+        public const int ExpectedGateCount = 53;
 
         public static int RunAll()
         {
@@ -63,6 +63,8 @@ namespace ParkingSim.Tests
             passed += Run("㊾ 현실시간 보정 — 공개사양 서비스틱·양자화", TestPublishedTimeCalibration);
             passed += Run("㊿ 현실시간 지상형 — 1·2·3m/s 자동경로 물리 재계획", TestCalibratedSurfaceAccess);
             passed += Run("51 현실시간 포켓14 — 서비스 하한으로 7분 실패", TestCalibratedPocketFailure);
+            passed += Run("52 최종비교 — 동일맵 4정책·속도별 목적함수", TestFinalSurfacePolicyComparison);
+            passed += Run("53 최종비교 회계 — 정책별 상시전용비용 동일", TestFinalSurfacePolicyAccounting);
             Console.WriteLine(
                 $"\nV2 타당성 게이트 {passed}/{ExpectedGateCount} 통과");
             return passed;
@@ -543,6 +545,100 @@ namespace ParkingSim.Tests
                     $"   {speed:F0}m/s: {plan.Ticks}틱/{seconds:F1}초, " +
                     $"서비스하한={lowerBound:F1}초, 7분 실패");
             }
+        }
+
+        private static void TestFinalSurfacePolicyComparison()
+        {
+            foreach (double speed in new[] { 1.0, 2.0, 3.0 })
+            {
+                SurfacePolicyComparisonResultV2 comparison =
+                    SurfacePolicyComparisonV2.Run(
+                        PublishedParkingRobotTimingV2.Create(speed));
+                Assert(comparison.Success, comparison.FailReason);
+                Assert(comparison.Policies.Count == 4,
+                    speed + "m/s 최종 정책4종 누락");
+                SurfacePolicyMeasurementV2 always = comparison.Policies
+                    .Single(row => row.Policy == SurfaceEmergencyPolicyV2.AlwaysClear);
+                SurfacePolicyMeasurementV2 full = comparison.Policies
+                    .Single(row => row.Policy == SurfaceEmergencyPolicyV2.FullClearance);
+                SurfacePolicyMeasurementV2 minimum = comparison.Policies
+                    .Single(row => row.Policy ==
+                                   SurfaceEmergencyPolicyV2.MinimumBlockingVehicles);
+                SurfacePolicyMeasurementV2 fastest = comparison.Policies
+                    .Single(row => row.Policy ==
+                                   SurfaceEmergencyPolicyV2.FastestPhysicalOpening);
+                Assert(always.GrossAdditionalCars == 0 &&
+                       always.MovedVehicles == 0 &&
+                       always.Ticks == 0,
+                    "상시개방 기준이 α0·0대·0틱이 아님");
+                Assert(full.GrossAdditionalCars == 5 && full.MovedVehicles == 5,
+                    speed + "m/s 전면 정책 gross5·이동5 불일치");
+                Assert(minimum.GrossAdditionalCars == 5 && minimum.MovedVehicles == 2,
+                    speed + "m/s 최소차량 정책 gross5·이동2 불일치");
+                Assert(fastest.GrossAdditionalCars == 5 && fastest.MovedVehicles == 3,
+                    speed + "m/s 최소개통 정책 gross5·이동3 불일치");
+                Assert(fastest.Seconds < minimum.Seconds &&
+                       minimum.Seconds < full.Seconds,
+                    speed + "m/s 정책 시간 순서가 하부<상부<전면이 아님");
+                Assert(fastest.ReductionVsFullClearance >= 0.4,
+                    speed + "m/s 자동 하부의 전면 대비 단축이 40% 미만");
+                Console.WriteLine(
+                    $"   {speed:F0}m/s: 전면={full.Seconds:F1}초/" +
+                    $"{(full.WithinSevenMinutes ? "통과" : "실패")}, " +
+                    $"상부={minimum.Seconds:F1}초, 하부={fastest.Seconds:F1}초, " +
+                    $"단축={fastest.ReductionVsFullClearance:P1}");
+            }
+        }
+
+        private static void TestFinalSurfacePolicyAccounting()
+        {
+            SurfacePolicyComparisonResultV2 comparison =
+                SurfacePolicyComparisonV2.Run(
+                    PublishedParkingRobotTimingV2.Create(1.0));
+            Assert(comparison.Success, comparison.FailReason);
+            foreach (SurfacePolicyMeasurementV2 row in comparison.Policies
+                         .Where(row => row.Policy !=
+                                       SurfaceEmergencyPolicyV2.AlwaysClear))
+            {
+                StagingLandAccountingResultV2 parking =
+                    EvaluateSurfacePolicyLand(row, convertedCount: 5);
+                StagingLandAccountingResultV2 mixed =
+                    EvaluateSurfacePolicyLand(row, convertedCount: 2);
+                StagingLandAccountingResultV2 nonParking =
+                    EvaluateSurfacePolicyLand(row, convertedCount: 0);
+                Assert(parking.NetAlphaClaimable &&
+                       mixed.NetAlphaClaimable &&
+                       nonParking.NetAlphaClaimable,
+                    row.Policy + " 토지 회계 확정 실패");
+                Assert(parking.DedicatedStagingSlots == 5 &&
+                       mixed.DedicatedStagingSlots == 5 &&
+                       nonParking.DedicatedStagingSlots == 5,
+                    row.Policy + " 정책별 상시 전용면이 달라짐");
+                Assert(parking.UsedStagingSlots == row.MovedVehicles &&
+                       mixed.UsedStagingSlots == row.MovedVehicles,
+                    row.Policy + " 사건 사용면과 이동차량 불일치");
+                Assert(parking.VerifiedNetAlpha == 0 &&
+                       mixed.VerifiedNetAlpha == 3 &&
+                       nonParking.VerifiedNetAlpha == 5,
+                    row.Policy + " 토지 민감도 net0/3/5 불일치");
+            }
+        }
+
+        private static StagingLandAccountingResultV2 EvaluateSurfacePolicyLand(
+            SurfacePolicyMeasurementV2 row,
+            int convertedCount)
+        {
+            ParkingSlotV2[] staging = row.ScenarioProblem.Slots
+                .Where(slot => slot.Kind == SlotKind.Staging).ToArray();
+            return CapacityTradeoffV2.EvaluateStagingLand(
+                row.ScenarioProblem,
+                row.Plan,
+                row.GrossAdditionalCars,
+                staging.Select((slot, index) => new StagingLandProfileV2(
+                    slot.Id,
+                    index < convertedCount
+                        ? StagingLandKindV2.ConvertedParkingSpace
+                        : StagingLandKindV2.ExistingNonParkingPaved)));
         }
 
         private static bool ThrowsArgument(Action action)

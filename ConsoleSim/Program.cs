@@ -97,6 +97,9 @@ namespace ParkingSim
                 case "v2report":
                     Scenarios.V2ReportDemo.Run();
                     break;
+                case "v2final":
+                    Scenarios.V2FinalComparisonDemo.Run();
+                    break;
                 case "v2tradeoff":
                     Scenarios.V2TradeoffDemo.Run();
                     break;

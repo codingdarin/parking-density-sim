@@ -28,10 +28,14 @@ namespace ParkingSim.Scenarios
         private sealed class CalibratedMeasurement
         {
             public double Speed;
+            public int SurfaceFullTicks;
+            public double SurfaceFullSeconds;
+            public bool SurfaceFullWithinSevenMinutes;
             public int SurfaceLowerTicks;
             public double SurfaceLowerSeconds;
             public int SurfaceUpperTicks;
             public double SurfaceUpperSeconds;
+            public double SurfaceLowerReductionVsFull;
             public int PocketTicks;
             public double PocketSeconds;
             public double ServiceLowerBoundSeconds;
@@ -154,6 +158,10 @@ namespace ParkingSim.Scenarios
             report.AppendLine(
                 "| 1면 이상 미확인 | — | 확정 불가 | **불가** |");
             report.AppendLine();
+            report.AppendLine(
+                "전면5대·상부2대·하부3대 정책은 사건 사용면만 다르고 상시 적치5면은 같으므로 " +
+                "동일 토지 가정에서 net α도 모두 0/+3/+5로 같다.");
+            report.AppendLine();
             report.AppendLine("## 공개사양 현실 시간 민감도");
             report.AppendLine();
             report.AppendLine(
@@ -161,16 +169,18 @@ namespace ParkingSim.Scenarios
                 "이동속도1/2/3m/s로 물리 계획을 다시 계산했다. 3m/s는 공개 최대속도이며 평균 운행속도가 아니다.");
             report.AppendLine();
             report.AppendLine(
-                "| 이동속도 | 지상 하부3대 | 지상 상부2대 | 선택 | 포켓14·20대 | 서비스 하한 | 7분 |");
-            report.AppendLine("|---:|---:|---:|---|---:|---:|---|");
+                "| 이동속도 | 상시개방 | 전면5대 | 상부2대 | 자동 하부3대 | 전면대비 단축 | 포켓14·20대 |");
+            report.AppendLine("|---:|---:|---:|---:|---:|---:|---:|");
             foreach (CalibratedMeasurement row in calibrated)
             {
                 report.AppendLine(
-                    $"| {row.Speed:F0}m/s | " +
+                    $"| {row.Speed:F0}m/s | 0초/통과 | " +
+                    $"{row.SurfaceFullSeconds:F1}초/" +
+                    $"{(row.SurfaceFullWithinSevenMinutes ? "통과" : "**실패**")} | " +
+                    $"{row.SurfaceUpperSeconds:F1}초 ({row.SurfaceUpperTicks}틱) | " +
                     $"{row.SurfaceLowerSeconds:F1}초 ({row.SurfaceLowerTicks}틱) | " +
-                    $"{row.SurfaceUpperSeconds:F1}초 ({row.SurfaceUpperTicks}틱) | 하부 | " +
-                    $"{row.PocketSeconds:F1}초 ({row.PocketTicks}틱) | " +
-                    $"{row.ServiceLowerBoundSeconds:F1}초 | **실패** |");
+                    $"{row.SurfaceLowerReductionVsFull:P1} | " +
+                    $"{row.PocketSeconds:F1}초/**실패** |");
             }
             report.AppendLine();
             report.AppendLine(
@@ -305,22 +315,17 @@ namespace ParkingSim.Scenarios
             PhysicalTimeProfileV2 profile =
                 PublishedParkingRobotTimingV2.Create(speed);
             OperationTimingV2 timing = profile.CreateOperationTiming();
-            SurfaceApartmentScenarioV2 surface =
-                SurfaceApartmentScenarioFactoryV2.Build(timing);
-            AutomaticEmergencyAccessPlanResultV2 access =
-                EmergencyAccessRouteGeneratorV2.Solve(
-                    surface.BaseProblem,
-                    (1, 5),
-                    (22, 5),
-                    activeRobotCount: 4,
-                    maxTick: 5000);
-            if (!access.Success)
+            SurfacePolicyComparisonResultV2 comparison =
+                SurfacePolicyComparisonV2.Run(profile);
+            if (!comparison.Success)
                 throw new InvalidOperationException(
-                    profile.Name + " 지상형 보정 실패: " + access.FailReason);
-            EmergencyAccessCandidateResultV2 upper = access.Plan.Candidates
-                .Single(candidate =>
-                    candidate.Success &&
-                    candidate.Scenario.SelectedVehicleCount == 2);
+                    profile.Name + " 지상형 보정 실패: " + comparison.FailReason);
+            SurfacePolicyMeasurementV2 full = comparison.Policies.Single(
+                row => row.Policy == SurfaceEmergencyPolicyV2.FullClearance);
+            SurfacePolicyMeasurementV2 upper = comparison.Policies.Single(
+                row => row.Policy == SurfaceEmergencyPolicyV2.MinimumBlockingVehicles);
+            SurfacePolicyMeasurementV2 lower = comparison.Policies.Single(
+                row => row.Policy == SurfaceEmergencyPolicyV2.FastestPhysicalOpening);
 
             EmergencyScenarioBuildResultV2 pocket =
                 CorridorScenarioFactoryV2.BuildEmergencyWithPockets(
@@ -339,11 +344,15 @@ namespace ParkingSim.Scenarios
             return new CalibratedMeasurement
             {
                 Speed = speed,
-                SurfaceLowerTicks = access.Plan.Selected.Plan.Ticks,
-                SurfaceLowerSeconds =
-                    profile.PlanSeconds(access.Plan.Selected.Plan.Ticks),
-                SurfaceUpperTicks = upper.Plan.Ticks,
-                SurfaceUpperSeconds = profile.PlanSeconds(upper.Plan.Ticks),
+                SurfaceFullTicks = full.Ticks,
+                SurfaceFullSeconds = full.Seconds,
+                SurfaceFullWithinSevenMinutes = full.WithinSevenMinutes,
+                SurfaceLowerTicks = lower.Ticks,
+                SurfaceLowerSeconds = lower.Seconds,
+                SurfaceUpperTicks = upper.Ticks,
+                SurfaceUpperSeconds = upper.Seconds,
+                SurfaceLowerReductionVsFull =
+                    lower.ReductionVsFullClearance.Value,
                 PocketTicks = pocketPlan.Ticks,
                 PocketSeconds = profile.PlanSeconds(pocketPlan.Ticks),
                 ServiceLowerBoundSeconds =
