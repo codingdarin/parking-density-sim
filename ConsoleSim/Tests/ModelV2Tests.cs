@@ -7,7 +7,7 @@ namespace ParkingSim.Tests
 {
     public static class ModelV2Tests
     {
-        public const int ExpectedGateCount = 45;
+        public const int ExpectedGateCount = 48;
 
         public static int RunAll()
         {
@@ -57,6 +57,9 @@ namespace ParkingSim.Tests
             passed += Run("㊸ 자동경로 0틱 — 이미 열린 경로", TestAutomaticAlreadyClear);
             passed += Run("㊹ 자동경로 중복 — 유사 후보 제거", TestAutomaticDuplicateRemoval);
             passed += Run("㊺ 자동경로 재현 — 동일 후보 순서·결과", TestAutomaticReproducibility);
+            passed += Run("㊻ 적치 토지회계 — 실제사용과 상시전용 비용 분리", TestStagingLandAccounting);
+            passed += Run("㊼ 포켓 토지회계 — 비주차6·주차전용14·net α6", TestPocketLandAccounting);
+            passed += Run("㊽ 토지회계 방어 — 미확인·중복·외부슬롯·실패계획", TestStagingLandAccountingGuards);
             Console.WriteLine(
                 $"\nV2 타당성 게이트 {passed}/{ExpectedGateCount} 통과");
             return passed;
@@ -301,6 +304,161 @@ namespace ParkingSim.Tests
                 "추가2/전용2 동일부지 회계 오류");
             Assert(!insufficient.Success && insufficient.FailReason.Contains("적치 용량 부족"),
                 "차량2/적치1 정책이 실패하지 않음");
+        }
+
+        private static void TestStagingLandAccounting()
+        {
+            SurfaceApartmentScenarioV2 surface = SurfaceApartmentScenarioFactoryV2.Build();
+            AutomaticEmergencyAccessPlanResultV2 automatic =
+                EmergencyAccessRouteGeneratorV2.Solve(
+                    surface.BaseProblem, (1, 5), (22, 5), activeRobotCount: 4);
+            Assert(automatic.Success && automatic.Plan.Selected.Plan.Ticks == 36,
+                automatic.FailReason);
+            EmergencyProblemV2 problem = automatic.Plan.Selected.Scenario.Problem;
+            PipelinedPlanResultV2 plan = automatic.Plan.Selected.Plan;
+
+            ParkingSlotV2[] staging = problem.Slots
+                .Where(slot => slot.Kind == SlotKind.Staging).ToArray();
+            StagingLandAccountingResultV2 allParking =
+                CapacityTradeoffV2.EvaluateStagingLand(
+                    problem,
+                    plan,
+                    grossAdditionalCars: 5,
+                    staging.Select(slot => new StagingLandProfileV2(
+                        slot.Id, StagingLandKindV2.ConvertedParkingSpace)));
+            StagingLandAccountingResultV2 allNonParking =
+                CapacityTradeoffV2.EvaluateStagingLand(
+                    problem,
+                    plan,
+                    grossAdditionalCars: 5,
+                    staging.Select(slot => new StagingLandProfileV2(
+                        slot.Id, StagingLandKindV2.ExistingNonParkingPaved)));
+            StagingLandAccountingResultV2 mixed =
+                CapacityTradeoffV2.EvaluateStagingLand(
+                    problem,
+                    plan,
+                    grossAdditionalCars: 5,
+                    staging.Select((slot, index) => new StagingLandProfileV2(
+                        slot.Id,
+                        index < 2
+                            ? StagingLandKindV2.ConvertedParkingSpace
+                            : StagingLandKindV2.ExistingNonParkingPaved)));
+
+            Assert(allParking.NetAlphaClaimable &&
+                   allParking.RequiredStagingSlots == 3 &&
+                   allParking.UsedStagingSlots == 3 &&
+                   allParking.DedicatedStagingSlots == 5 &&
+                   allParking.UnusedDedicatedStagingSlots == 2,
+                "지상형 실제사용3면·상시전용5면 분리가 잘못됨");
+            Assert(allParking.ParkingOpportunityCostCars == 5 &&
+                   allParking.VerifiedNetAlpha == 0,
+                "전 적치면이 주차 가능 부지일 때 net α0이 아님");
+            Assert(allNonParking.VerifiedNetAlpha == 5,
+                "전 적치면이 기존 비주차 포장일 때 net α5가 아님");
+            Assert(mixed.ConvertedParkingSlots == 2 &&
+                   mixed.ExistingNonParkingPavedSlots == 3 &&
+                   mixed.VerifiedNetAlpha == 3,
+                "혼합 토지 2주차+3비주차 회계 오류");
+        }
+
+        private static void TestPocketLandAccounting()
+        {
+            EmergencyScenarioBuildResultV2 built =
+                CorridorScenarioFactoryV2.BuildEmergencyWithPockets(
+                    100, 14, pocketOffset: 14);
+            Assert(built.Success && built.SelectedVehicleCount == 20, built.FailReason);
+            PipelinedPlanResultV2 plan = PipelinedPrioritizedPlannerV2.Solve(
+                built.Problem,
+                activeRobotCount: 4,
+                maxHighLevelCandidates: 8);
+            Assert(plan.Success && plan.PhysicallyValid && plan.Ticks == 160,
+                plan.FailReason);
+
+            IEnumerable<StagingLandProfileV2> profiles = built.Problem.Slots
+                .Where(slot => slot.Kind == SlotKind.Staging)
+                .Select(slot => new StagingLandProfileV2(
+                    slot.Id,
+                    slot.Pose.Y == CorridorScenarioFactoryV2.CorridorBottomY + 3
+                        ? StagingLandKindV2.ConvertedParkingSpace
+                        : StagingLandKindV2.ExistingNonParkingPaved));
+            StagingLandAccountingResultV2 accounting =
+                CapacityTradeoffV2.EvaluateStagingLand(
+                    built.Problem, plan, grossAdditionalCars: 20, profiles);
+            Assert(accounting.NetAlphaClaimable, accounting.FailReason);
+            Assert(accounting.DedicatedStagingSlots == 20 &&
+                   accounting.UsedStagingSlots == 20 &&
+                   accounting.ExistingNonParkingPavedSlots == 6 &&
+                   accounting.ConvertedParkingSlots == 14 &&
+                   accounting.ParkingOpportunityCostCars == 14 &&
+                   accounting.VerifiedNetAlpha == 6,
+                "포켓14 토지 회계가 6비주차+14주차전용=net6을 재현하지 못함");
+        }
+
+        private static void TestStagingLandAccountingGuards()
+        {
+            SurfaceApartmentScenarioV2 surface = SurfaceApartmentScenarioFactoryV2.Build();
+            AutomaticEmergencyAccessPlanResultV2 automatic =
+                EmergencyAccessRouteGeneratorV2.Solve(
+                    surface.BaseProblem, (1, 5), (22, 5), activeRobotCount: 4);
+            Assert(automatic.Success, automatic.FailReason);
+            EmergencyProblemV2 problem = automatic.Plan.Selected.Scenario.Problem;
+            PipelinedPlanResultV2 plan = automatic.Plan.Selected.Plan;
+            ParkingSlotV2[] staging = problem.Slots
+                .Where(slot => slot.Kind == SlotKind.Staging).ToArray();
+            StagingLandProfileV2[] complete = staging
+                .Select(slot => new StagingLandProfileV2(
+                    slot.Id, StagingLandKindV2.ExistingNonParkingPaved))
+                .ToArray();
+
+            StagingLandAccountingResultV2 missing =
+                CapacityTradeoffV2.EvaluateStagingLand(
+                    problem, plan, 5, complete.Take(4));
+            Assert(!missing.NetAlphaClaimable &&
+                   missing.UnverifiedSlots == 1 &&
+                   !missing.VerifiedNetAlpha.HasValue &&
+                   missing.FailReason.Contains("미확인"),
+                "미분류 적치면을 순이득 주장 불가로 반환하지 않음");
+
+            bool duplicateRejected = ThrowsArgument(() =>
+                CapacityTradeoffV2.EvaluateStagingLand(
+                    problem, plan, 5, complete.Concat(new[] { complete[0] })));
+            bool foreignRejected = ThrowsArgument(() =>
+                CapacityTradeoffV2.EvaluateStagingLand(
+                    problem,
+                    plan,
+                    5,
+                    complete.Concat(new[]
+                    {
+                        new StagingLandProfileV2(
+                            999999, StagingLandKindV2.ExistingNonParkingPaved),
+                    })));
+            Assert(duplicateRejected && foreignRejected,
+                "중복 또는 레이아웃 외부 적치 슬롯 분류를 허용함");
+
+            var failedPlan = new PipelinedPlanResultV2(4)
+            {
+                FailReason = "테스트 물리 계획 실패",
+            };
+            StagingLandAccountingResultV2 failed =
+                CapacityTradeoffV2.EvaluateStagingLand(
+                    problem, failedPlan, 5, complete);
+            Assert(!failed.NetAlphaClaimable &&
+                   failed.FailReason.Contains("물리 계획 실패") &&
+                   !failed.VerifiedNetAlpha.HasValue,
+                "실패 계획에서 순이득을 주장함");
+        }
+
+        private static bool ThrowsArgument(Action action)
+        {
+            try
+            {
+                action();
+                return false;
+            }
+            catch (ArgumentException)
+            {
+                return true;
+            }
         }
 
         private static void TestTimelineCapture()
