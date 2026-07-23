@@ -27,6 +27,10 @@ namespace ParkingSim.Runtime
 
         private EmergencyProblemV2 _problem;
         private PipelinedPlanResultV2 _plan;
+        private SurfaceApartmentScenarioV2 _surface;
+        private PhysicalTimeProfileV2 _timeProfile;
+        private EmergencyAccessRouteV2 _selectedRoute;
+        private IReadOnlyList<EmergencyAccessRouteV2> _candidateRoutes;
         private readonly Dictionary<int, GameObject> _carViews = new Dictionary<int, GameObject>();
         private readonly Dictionary<int, PipelinedMissionV2> _missions =
             new Dictionary<int, PipelinedMissionV2>();
@@ -36,47 +40,73 @@ namespace ParkingSim.Runtime
         private string _routeName;
         private int _movedVehicleCount;
         private int _additionalVehicleCount;
+        private (int X, int Y) _fireCell;
+        private string _inputStatus;
         private float _displayTick;
         private float _time;
 
         private void Start()
         {
+            _timeProfile = PublishedParkingRobotTimingV2.Create(1.0);
+            _fireCell = (22, 5);
             LoadPreset(1);
         }
 
         private void LoadPreset(int preset)
         {
-            SurfaceApartmentScenarioV2 surface = SurfaceApartmentScenarioFactoryV2.Build();
+            _surface = SurfaceApartmentScenarioFactoryV2.Build(
+                _timeProfile.CreateOperationTiming());
             EmergencyScenarioBuildResultV2 built;
             PipelinedPlanResultV2 plan;
             string scenarioName;
             string routeName;
             if (preset == 0)
             {
+                _fireCell = (22, 5);
                 scenarioName = "전면 재배치 기준선";
                 routeName = "두 접근로 전체";
                 built = new EmergencyScenarioV2(
-                    "unity-surface-full", (22, 5), surface.FullClearanceCells)
-                    .Build(surface.BaseProblem);
+                    "unity-surface-full", _fireCell, _surface.FullClearanceCells)
+                    .Build(_surface.BaseProblem);
                 plan = built.Success
                     ? PipelinedPrioritizedPlannerV2.Solve(
-                        built.Problem, activeRobotCount: 4, maxHighLevelCandidates: 8)
+                        built.Problem,
+                        activeRobotCount: 4,
+                        maxHighLevelCandidates: 8,
+                        maxTick: 5000)
                     : null;
+                _selectedRoute = new EmergencyAccessRouteV2(
+                    "full-clearance", (1, 5), _fireCell, _surface.FullClearanceCells);
+                _candidateRoutes = new[] { _selectedRoute };
             }
             else
             {
-                scenarioName = "핵심경로 우선";
-                EmergencyAccessPlanResultV2 access = EmergencyAccessPlannerV2.Solve(
-                    surface.BaseProblem, surface.Routes,
-                    activeRobotCount: 4, maxHighLevelCandidates: 8);
-                if (!access.Success)
+                scenarioName = "클릭 화재 자동 핵심경로";
+                AutomaticEmergencyAccessPlanResultV2 automatic =
+                    EmergencyAccessRouteGeneratorV2.Solve(
+                        _surface.BaseProblem,
+                        (1, 5),
+                        _fireCell,
+                        activeRobotCount: 4,
+                        maxHighLevelCandidates: 8,
+                        maxTick: 5000);
+                if (!automatic.Success)
                 {
-                    Debug.LogError("[Model V2] 핵심경로 선택 실패: " + access.FailReason);
+                    string attemptedFire =
+                        "(" + _fireCell.X + "," + _fireCell.Y + ")";
+                    if (_problem != null && _problem.FireCell.HasValue)
+                        _fireCell = _problem.FireCell.Value;
+                    _inputStatus =
+                        "화재 " + attemptedFire + " 자동경로 실패: " +
+                        automatic.FailReason;
+                    Debug.LogWarning("[Model V2] " + _inputStatus);
                     return;
                 }
-                built = access.Selected.Scenario;
-                plan = access.Selected.Plan;
-                routeName = access.Selected.Route.Name;
+                built = automatic.Plan.Selected.Scenario;
+                plan = automatic.Plan.Selected.Plan;
+                _selectedRoute = automatic.Plan.Selected.Route;
+                _candidateRoutes = automatic.Generation.Routes;
+                routeName = _selectedRoute.Name;
             }
             if (!built.Success)
             {
@@ -100,12 +130,16 @@ namespace ParkingSim.Runtime
             _scenarioName = scenarioName;
             _routeName = routeName;
             _movedVehicleCount = built.SelectedVehicleCount;
-            _additionalVehicleCount = surface.BaseProblem.VehicleCount;
+            _additionalVehicleCount = _surface.BaseProblem.VehicleCount;
+            _inputStatus =
+                "화재 (" + _fireCell.X + "," + _fireCell.Y + ") · 후보 " +
+                _candidateRoutes.Count + "개";
             _time = 0f;
             foreach (PipelinedMissionV2 mission in _plan.Missions)
                 _missions.Add(mission.VehicleIndex, mission);
 
             BuildGrid();
+            BuildRouteOverlays();
             BuildFireMarker();
             BuildFixedCars();
             BuildMovableCars();
@@ -120,7 +154,8 @@ namespace ParkingSim.Runtime
                 _problem.FixedVehiclePoses.Count + ", 선택경로=" + _routeName +
                 ", 가변주차=" + _additionalVehicleCount + ", " +
                 _plan.RobotTimelines.Length + "조, " + _plan.Ticks + "틱/" +
-                (_plan.Ticks * 2.5f).ToString("0.0") + "초, 확장 " +
+                _timeProfile.PlanSeconds(_plan.Ticks).ToString("0.0") +
+                "초(Stanley 1m/s 참조), 확장 " +
                 _plan.ExpandedStates + "상태");
         }
 
@@ -128,6 +163,22 @@ namespace ParkingSim.Runtime
         {
             if (PresetKeyPressed(1)) LoadPreset(0);
             if (PresetKeyPressed(2)) LoadPreset(1);
+            Vector2 pointerPosition;
+            if (PointerPressed(out pointerPosition))
+            {
+                (int X, int Y) clickedCell;
+                string failure;
+                if (TryResolveClickedCell(pointerPosition, out clickedCell, out failure))
+                {
+                    _fireCell = clickedCell;
+                    LoadPreset(1);
+                }
+                else
+                {
+                    _inputStatus = failure;
+                    Debug.LogWarning("[Model V2] " + failure);
+                }
+            }
             if (_plan == null) return;
             _time += Time.deltaTime;
             float cycle = _plan.Ticks + EndHoldTicks;
@@ -148,6 +199,61 @@ namespace ParkingSim.Runtime
 #else
             return false;
 #endif
+        }
+
+        private static bool PointerPressed(out Vector2 position)
+        {
+#if ENABLE_INPUT_SYSTEM
+            Mouse mouse = Mouse.current;
+            if (mouse != null && mouse.leftButton.wasPressedThisFrame)
+            {
+                position = mouse.position.ReadValue();
+                return true;
+            }
+#elif ENABLE_LEGACY_INPUT_MANAGER
+            if (Input.GetMouseButtonDown(0))
+            {
+                position = Input.mousePosition;
+                return true;
+            }
+#endif
+            position = Vector2.zero;
+            return false;
+        }
+
+        private bool TryResolveClickedCell(
+            Vector2 screenPosition,
+            out (int X, int Y) cell,
+            out string failure)
+        {
+            Camera camera = Camera.main;
+            if (camera == null) camera = Object.FindAnyObjectByType<Camera>();
+            if (camera == null)
+            {
+                cell = default;
+                failure = "활성 카메라가 없어 화재 위치를 선택할 수 없음";
+                return false;
+            }
+            Ray ray = camera.ScreenPointToRay(screenPosition);
+            RaycastHit hit;
+            if (!Physics.Raycast(ray, out hit, 100f))
+            {
+                cell = default;
+                failure = "주차장 격자를 클릭해야 함";
+                return false;
+            }
+            cell = (
+                Mathf.RoundToInt(hit.point.x),
+                Mathf.RoundToInt(hit.point.z));
+            if (_surface == null ||
+                !_surface.BaseProblem.IsFloor(cell.X, cell.Y))
+            {
+                failure =
+                    "선택 셀 (" + cell.X + "," + cell.Y + ")은 이동 가능 floor 밖임";
+                return false;
+            }
+            failure = null;
+            return true;
         }
 
         private void ApplyTick(float timelineTick)
@@ -212,6 +318,48 @@ namespace ParkingSim.Runtime
                     tile.transform.localScale = new Vector3(0.94f, floor ? 0.12f : 0.35f, 0.94f);
                     SetColor(tile, CellColor(x, y));
                 }
+            }
+        }
+
+        private void BuildRouteOverlays()
+        {
+            if (_candidateRoutes == null || _selectedRoute == null) return;
+            foreach (EmergencyAccessRouteV2 route in _candidateRoutes)
+            {
+                if (route.Name == _selectedRoute.Name) continue;
+                BuildRouteOverlay(
+                    route,
+                    "CandidateRoute-" + route.Name,
+                    new Color(0.12f, 0.38f, 0.78f),
+                    0.08f,
+                    0.54f);
+            }
+            BuildRouteOverlay(
+                _selectedRoute,
+                "SelectedRoute-" + _selectedRoute.Name,
+                new Color(0.08f, 0.88f, 0.92f),
+                0.12f,
+                0.72f);
+        }
+
+        private void BuildRouteOverlay(
+            EmergencyAccessRouteV2 route,
+            string namePrefix,
+            Color color,
+            float y,
+            float scale)
+        {
+            int index = 0;
+            foreach (var cell in route.RequiredCells)
+            {
+                var marker = GameObject.CreatePrimitive(PrimitiveType.Cube);
+                Track(marker);
+                marker.name = namePrefix + "-" + index++;
+                marker.transform.position = new Vector3(cell.X, y, cell.Y);
+                marker.transform.localScale = new Vector3(scale, 0.04f, scale);
+                SetColor(marker, color);
+                Collider collider = marker.GetComponent<Collider>();
+                if (collider != null) Destroy(collider);
             }
         }
 
@@ -376,18 +524,23 @@ namespace ParkingSim.Runtime
         private void OnGUI()
         {
             if (_plan == null) return;
-            bool safe = _plan.Ticks <= 168;
-            GUI.Box(new Rect(12f, 12f, 350f, 118f), string.Empty);
-            GUI.Label(new Rect(24f, 22f, 330f, 24f), "Model V2 — " + _scenarioName);
-            GUI.Label(new Rect(24f, 46f, 330f, 24f),
+            double seconds = _timeProfile.PlanSeconds(_plan.Ticks);
+            bool safe = seconds <= 420.0;
+            GUI.Box(new Rect(12f, 12f, 500f, 166f), string.Empty);
+            GUI.Label(new Rect(24f, 22f, 476f, 24f), "Model V2 — " + _scenarioName);
+            GUI.Label(new Rect(24f, 46f, 476f, 24f),
                 "경로 " + _routeName + " · 이동 " + _movedVehicleCount + "/" +
                 _additionalVehicleCount + "대 · 운송유닛 " +
                 _plan.RobotTimelines.Length + "조");
-            GUI.Label(new Rect(24f, 70f, 330f, 24f),
-                "확보 " + _plan.Ticks + "틱 / " + (_plan.Ticks * 2.5f).ToString("0.0") +
-                "초(가정) · 7분 " + (safe ? "통과" : "실패") +
+            GUI.Label(new Rect(24f, 70f, 476f, 24f),
+                "확보 " + _plan.Ticks + "틱 / " + seconds.ToString("0.0") +
+                "초(Stanley 1m/s 참조) · 7분 " + (safe ? "통과" : "실패") +
                 " · 재생 t=" + _displayTick.ToString("0.0"));
-            GUI.Label(new Rect(24f, 94f, 330f, 24f), "[1] 전면 재배치  [2] 핵심경로 우선");
+            GUI.Label(new Rect(24f, 94f, 476f, 24f), _inputStatus);
+            GUI.Label(new Rect(24f, 118f, 476f, 24f),
+                "바닥 클릭: 화재 위치·자동 재계획  ·  청록: 선택  ·  파랑: 다른 후보");
+            GUI.Label(new Rect(24f, 142f, 476f, 24f),
+                "[1] 기본 화재 전면 재배치  [2] 현재 화재 자동 핵심경로");
         }
 
         private readonly struct VehicleVisualState
