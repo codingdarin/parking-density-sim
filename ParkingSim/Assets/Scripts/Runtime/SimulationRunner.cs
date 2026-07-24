@@ -144,6 +144,7 @@ namespace ParkingSim.Runtime
                 _missions.Add(mission.VehicleIndex, mission);
 
             BuildGrid();
+            BuildApartmentContext();
             BuildRouteOverlays();
             BuildFireMarker();
             BuildEntranceMarker();
@@ -460,6 +461,128 @@ namespace ParkingSim.Runtime
                 0.72f);
         }
 
+        private void BuildApartmentContext()
+        {
+            BuildApartmentBuilding(
+                "Fire-Apartment",
+                new Vector3(25.2f, 0f, 7f),
+                width: 3.2f,
+                depth: 8.4f,
+                height: 6.8f,
+                floors: 6,
+                southColumns: 2,
+                westColumns: 5,
+                bodyColor: new Color(0.50f, 0.54f, 0.58f),
+                accentColor: new Color(0.72f, 0.20f, 0.16f));
+            BuildApartmentBuilding(
+                "Background-Apartment",
+                new Vector3(11.5f, 0f, 15.4f),
+                width: 10.4f,
+                depth: 2.8f,
+                height: 5.6f,
+                floors: 5,
+                southColumns: 7,
+                westColumns: 2,
+                bodyColor: new Color(0.43f, 0.48f, 0.54f),
+                accentColor: new Color(0.12f, 0.46f, 0.68f));
+        }
+
+        private void BuildApartmentBuilding(
+            string name,
+            Vector3 origin,
+            float width,
+            float depth,
+            float height,
+            int floors,
+            int southColumns,
+            int westColumns,
+            Color bodyColor,
+            Color accentColor)
+        {
+            var building = new GameObject(name);
+            Track(building);
+            building.transform.position = origin;
+            CreateVisualChild(
+                PrimitiveType.Cube,
+                building.transform,
+                name + "-Body",
+                new Vector3(0f, height / 2f, 0f),
+                new Vector3(width, height, depth),
+                bodyColor);
+            CreateVisualChild(
+                PrimitiveType.Cube,
+                building.transform,
+                name + "-Roof",
+                new Vector3(0f, height + 0.16f, 0f),
+                new Vector3(width + 0.24f, 0.28f, depth + 0.24f),
+                new Color(0.18f, 0.21f, 0.25f));
+            CreateVisualChild(
+                PrimitiveType.Cube,
+                building.transform,
+                name + "-Core",
+                new Vector3(0f, height + 0.56f, 0f),
+                new Vector3(
+                    Mathf.Min(1.2f, width * 0.36f),
+                    0.80f,
+                    Mathf.Min(1.5f, depth * 0.34f)),
+                accentColor);
+
+            float floorHeight = height / floors;
+            Color windowColor = new Color(0.12f, 0.30f, 0.43f);
+            for (int floor = 0; floor < floors; floor++)
+            {
+                float y = floorHeight * (floor + 0.58f);
+                for (int column = 0; column < southColumns; column++)
+                {
+                    float x = ColumnPosition(width, southColumns, column);
+                    CreateVisualChild(
+                        PrimitiveType.Cube,
+                        building.transform,
+                        name + "-SouthWindow-" + floor + "-" + column,
+                        new Vector3(x, y, -depth / 2f - 0.025f),
+                        new Vector3(
+                            Mathf.Min(0.72f, width / (southColumns + 1) * 0.58f),
+                            floorHeight * 0.42f,
+                            0.07f),
+                        windowColor);
+                }
+                for (int column = 0; column < westColumns; column++)
+                {
+                    float z = ColumnPosition(depth, westColumns, column);
+                    CreateVisualChild(
+                        PrimitiveType.Cube,
+                        building.transform,
+                        name + "-WestWindow-" + floor + "-" + column,
+                        new Vector3(-width / 2f - 0.025f, y, z),
+                        new Vector3(
+                            0.07f,
+                            floorHeight * 0.42f,
+                            Mathf.Min(0.72f, depth / (westColumns + 1) * 0.58f)),
+                        windowColor);
+                }
+                CreateVisualChild(
+                    PrimitiveType.Cube,
+                    building.transform,
+                    name + "-FloorBand-" + floor,
+                    new Vector3(0f, floorHeight * (floor + 1f), -depth / 2f - 0.06f),
+                    new Vector3(width + 0.14f, 0.07f, 0.15f),
+                    accentColor);
+            }
+
+            CreateVisualChild(
+                PrimitiveType.Cube,
+                building.transform,
+                name + "-Entrance",
+                new Vector3(-width / 2f - 0.04f, 0.62f, 0f),
+                new Vector3(0.10f, 1.24f, Mathf.Min(1.1f, depth * 0.3f)),
+                new Color(0.08f, 0.12f, 0.16f));
+        }
+
+        private static float ColumnPosition(float span, int columns, int index)
+        {
+            return -span / 2f + span * (index + 1f) / (columns + 1f);
+        }
+
         private void BuildRouteOverlay(
             EmergencyAccessRouteV2 route,
             string namePrefix,
@@ -630,7 +753,7 @@ namespace ParkingSim.Runtime
             float centerZ = (_problem.Height - 1) / 2f;
             float size = Mathf.Max(
                 _problem.Height / 2f,
-                _problem.Width / (2f * aspect)) + 1f;
+                _problem.Width / (2f * aspect)) + 2.5f;
             camera.orthographic = _topDownCamera;
             camera.orthographicSize = size;
             camera.fieldOfView = 38f;
@@ -747,6 +870,25 @@ namespace ParkingSim.Runtime
             child.transform.localRotation = Quaternion.identity;
             child.transform.localScale = localScale;
             SetColor(child, color);
+            return child;
+        }
+
+        private static GameObject CreateVisualChild(
+            PrimitiveType type,
+            Transform parent,
+            string name,
+            Vector3 localPosition,
+            Vector3 localScale,
+            Color color)
+        {
+            GameObject child = CreateChildPrimitive(
+                type, parent, name, localPosition, localScale, color);
+            Collider collider = child.GetComponent<Collider>();
+            if (collider != null)
+            {
+                collider.enabled = false;
+                Destroy(collider);
+            }
             return child;
         }
 
