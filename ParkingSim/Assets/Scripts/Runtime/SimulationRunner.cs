@@ -36,6 +36,7 @@ namespace ParkingSim.Runtime
             new Dictionary<int, PipelinedMissionV2>();
         private GameObject[] _robotViews;
         private GameObject[] _robotServiceIndicators;
+        private bool[] _robotUsesCustomView;
         private SimulationVisualLayers _visualLayers;
         private readonly SimulationCameraController _cameraController =
             new SimulationCameraController();
@@ -331,6 +332,8 @@ namespace ParkingSim.Runtime
                 TimedRobotStateV2 b = StateAt(_plan.RobotTimelines[robot], bTick);
                 _robotViews[robot].transform.position = Vector3.Lerp(
                     RobotPosition(a), RobotPosition(b), fraction);
+                _robotViews[robot].transform.rotation = Quaternion.Lerp(
+                    RobotRotation(a), RobotRotation(b), fraction);
                 SetColor(_robotViews[robot], RobotColor(robot, a.Carrying || b.Carrying));
             }
 
@@ -401,8 +404,13 @@ namespace ParkingSim.Runtime
                     ? new Color(1f, 0.72f, 0.08f)
                     : new Color(0.20f, 1f, 0.50f));
                 float pulse = 0.85f + 0.25f * Mathf.Sin(Time.unscaledTime * 8f);
+                float radius = _robotUsesCustomView[robot] ? 0.12f : 0.30f;
+                float baseHeight = _robotUsesCustomView[robot] ? 0.12f : 0.30f;
+                float progressHeight = _robotUsesCustomView[robot] ? 0.18f : 0.50f;
                 indicator.transform.localScale = new Vector3(
-                    0.30f * pulse, 0.30f + 0.50f * progress, 0.30f * pulse);
+                    radius * pulse,
+                    baseHeight + progressHeight * progress,
+                    radius * pulse);
             }
         }
 
@@ -751,6 +759,7 @@ namespace ParkingSim.Runtime
         {
             _robotViews = new GameObject[_plan.RobotTimelines.Length];
             _robotServiceIndicators = new GameObject[_plan.RobotTimelines.Length];
+            _robotUsesCustomView = new bool[_plan.RobotTimelines.Length];
             for (int robot = 0; robot < _plan.RobotTimelines.Length; robot++)
             {
                 GameObject cube = SimulationVisualAssetFactory.TryCreate(
@@ -761,10 +770,17 @@ namespace ParkingSim.Runtime
                     cube = GameObject.CreatePrimitive(PrimitiveType.Cube);
                 Track(cube, SimulationVisualLayer.Shared);
                 cube.name = "TransportUnit-" + (robot + 1);
-                cube.transform.localScale = new Vector3(0.72f, 0.18f, 0.72f);
                 if (primitiveFallback)
+                {
+                    cube.transform.localScale = new Vector3(0.72f, 0.18f, 0.72f);
                     SetColor(cube, RobotColor(robot, false));
+                }
+                else
+                {
+                    cube.transform.localScale = Vector3.one;
+                }
                 _robotViews[robot] = cube;
+                _robotUsesCustomView[robot] = !primitiveFallback;
                 if (primitiveFallback)
                 {
                     CreateChildPrimitive(
@@ -775,8 +791,12 @@ namespace ParkingSim.Runtime
                 }
                 GameObject indicator = CreateChildPrimitive(
                     PrimitiveType.Sphere, cube.transform, "ServiceLight-" + (robot + 1),
-                    new Vector3(0f, 1.55f, 0f),
-                    new Vector3(0.30f, 0.55f, 0.30f),
+                    primitiveFallback
+                        ? new Vector3(0f, 1.55f, 0f)
+                        : new Vector3(0f, 0.43f, 0f),
+                    primitiveFallback
+                        ? new Vector3(0.30f, 0.55f, 0.30f)
+                        : new Vector3(0.12f, 0.18f, 0.12f),
                     new Color(1f, 0.72f, 0.08f));
                 Collider collider = indicator.GetComponent<Collider>();
                 if (collider != null) Destroy(collider);
@@ -857,6 +877,13 @@ namespace ParkingSim.Runtime
         private static Vector3 RobotPosition(TimedRobotStateV2 robot)
         {
             return new Vector3(robot.X, 0.20f, robot.Y);
+        }
+
+        private static Quaternion RobotRotation(TimedRobotStateV2 robot)
+        {
+            return robot.Orientation == VehicleOrientation.Horizontal
+                ? Quaternion.identity
+                : Quaternion.Euler(0f, 90f, 0f);
         }
 
         private static Vector3 VehiclePosition(VehiclePose pose, bool carried)
