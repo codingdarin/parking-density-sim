@@ -7,7 +7,7 @@ namespace ParkingSim.Tests
 {
     public static class ModelV2Tests
     {
-        public const int ExpectedGateCount = 53;
+        public const int ExpectedGateCount = 55;
 
         public static int RunAll()
         {
@@ -65,6 +65,8 @@ namespace ParkingSim.Tests
             passed += Run("51 현실시간 포켓14 — 서비스 하한으로 7분 실패", TestCalibratedPocketFailure);
             passed += Run("52 최종비교 — 동일맵 4정책·속도별 목적함수", TestFinalSurfacePolicyComparison);
             passed += Run("53 최종비교 회계 — 정책별 상시전용비용 동일", TestFinalSurfacePolicyAccounting);
+            passed += Run("54 지상 밀도 팩토리 — 차량0~14·배치4·적치 분리", TestSurfaceDensityFactory);
+            passed += Run("55 지상 밀도 평가 — 0틱 개방·현실시간 결정론", TestSurfaceDensityEvaluation);
             Console.WriteLine(
                 $"\nV2 타당성 게이트 {passed}/{ExpectedGateCount} 통과");
             return passed;
@@ -1222,6 +1224,88 @@ namespace ParkingSim.Tests
                    first.Plan.Selected.Scenario.SelectedVehicleCount ==
                    repeated.Plan.Selected.Scenario.SelectedVehicleCount,
                 "동일 입력의 최종 자동 선택 결과가 달라짐");
+        }
+
+        private static void TestSurfaceDensityFactory()
+        {
+            foreach (SurfaceVehiclePlacementV2 placement in
+                     Enum.GetValues(typeof(SurfaceVehiclePlacementV2)))
+            {
+                SurfaceApartmentScenarioV2 empty =
+                    SurfaceApartmentScenarioFactoryV2.BuildDensity(
+                        0, placement, 5);
+                SurfaceApartmentScenarioV2 full =
+                    SurfaceApartmentScenarioFactoryV2.BuildDensity(
+                        SurfaceApartmentScenarioFactoryV2.MaximumBlockingVehicles,
+                        placement,
+                        SurfaceApartmentScenarioFactoryV2.MaximumDensityStagingCapacity);
+                Assert(empty.BaseProblem.VehicleCount == 0 &&
+                       empty.BaseProblem.StagingCapacity == 5,
+                    "빈 밀도 조건의 차량·적치 수 불일치");
+                Assert(full.BaseProblem.VehicleCount == 14 &&
+                       full.BaseProblem.StagingCapacity == 14,
+                    "최대 밀도 조건의 차량·적치 수 불일치");
+                Assert(full.BlockingVehicleCount == 14 &&
+                       full.DedicatedStagingCapacity == 14 &&
+                       full.Placement == placement,
+                    "밀도 시나리오 메타데이터 불일치");
+            }
+
+            SurfaceApartmentScenarioV2 alternating =
+                SurfaceApartmentScenarioFactoryV2.BuildDensity(
+                    4,
+                    SurfaceVehiclePlacementV2.AlternatingEntranceFirst,
+                    5);
+            VehiclePose[] poses = alternating.BaseProblem.InitialVehicleSlots
+                .Select(slot => alternating.BaseProblem.Slots[slot].Pose)
+                .ToArray();
+            Assert(poses.SequenceEqual(new[]
+                {
+                    new VehiclePose(5, 5, VehicleOrientation.Horizontal),
+                    new VehiclePose(5, 9, VehicleOrientation.Horizontal),
+                    new VehiclePose(7, 5, VehicleOrientation.Horizontal),
+                    new VehiclePose(7, 9, VehicleOrientation.Horizontal),
+                }),
+                "입구부터 교대 배치의 결정론적 prefix 불일치");
+        }
+
+        private static void TestSurfaceDensityEvaluation()
+        {
+            PhysicalTimeProfileV2 profile =
+                PublishedParkingRobotTimingV2.Create(1.0);
+            SurfaceDensityTrialV2 empty = SurfaceDensitySweepV2.Evaluate(
+                0,
+                SurfaceVehiclePlacementV2.AlternatingEntranceFirst,
+                5,
+                (22, 5),
+                profile);
+            Assert(empty.PlanSuccess &&
+                   empty.Outcome == SurfaceDensityOutcomeV2.WithinBudget &&
+                   empty.MovedVehicleCount == 0 &&
+                   empty.Ticks == 0 &&
+                   Math.Abs(empty.Seconds) < 1e-9,
+                "이미 열린 지상 밀도 조건을 0대·0틱 성공으로 평가하지 않음");
+
+            SurfaceDensityTrialV2 first = SurfaceDensitySweepV2.Evaluate(
+                4,
+                SurfaceVehiclePlacementV2.AlternatingEntranceFirst,
+                14,
+                (22, 7),
+                profile);
+            SurfaceDensityTrialV2 repeated = SurfaceDensitySweepV2.Evaluate(
+                4,
+                SurfaceVehiclePlacementV2.AlternatingEntranceFirst,
+                14,
+                (22, 7),
+                profile);
+            Assert(first.PlanSuccess && repeated.PlanSuccess,
+                first.FailReason ?? repeated.FailReason);
+            Assert(first.Outcome == repeated.Outcome &&
+                   first.SelectedRoute == repeated.SelectedRoute &&
+                   first.MovedVehicleCount == repeated.MovedVehicleCount &&
+                   first.Ticks == repeated.Ticks &&
+                   Math.Abs(first.Seconds - repeated.Seconds) < 1e-9,
+                "동일 지상 밀도 입력의 현실시간 결과가 재현되지 않음");
         }
 
         private static EmergencyProblemV2 EmptyAccessProblem(
