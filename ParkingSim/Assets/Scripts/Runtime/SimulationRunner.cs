@@ -331,7 +331,9 @@ namespace ParkingSim.Runtime
                 TimedRobotStateV2 a = StateAt(_plan.RobotTimelines[robot], aTick);
                 TimedRobotStateV2 b = StateAt(_plan.RobotTimelines[robot], bTick);
                 _robotViews[robot].transform.position = Vector3.Lerp(
-                    RobotPosition(a), RobotPosition(b), fraction);
+                    RobotPosition(a, _robotUsesCustomView[robot]),
+                    RobotPosition(b, _robotUsesCustomView[robot]),
+                    fraction);
                 _robotViews[robot].transform.rotation = Quaternion.Lerp(
                     RobotRotation(a), RobotRotation(b), fraction);
                 SetColor(_robotViews[robot], RobotColor(robot, a.Carrying || b.Carrying));
@@ -342,9 +344,12 @@ namespace ParkingSim.Runtime
                 VehicleVisualState a = VehicleAt(vehicle, aTick);
                 VehicleVisualState b = VehicleAt(vehicle, bTick);
                 GameObject view = _carViews[vehicle];
+                bool customTransport =
+                    _robotUsesCustomView[_missions[vehicle].RobotIndex];
                 Vector3 position = Vector3.Lerp(
-                    VehiclePosition(a.Pose, a.Carried),
-                    VehiclePosition(b.Pose, b.Carried), fraction);
+                    VehiclePosition(a.Pose, a.Carried, customTransport),
+                    VehiclePosition(b.Pose, b.Carried, customTransport),
+                    fraction);
                 position.y += ServiceHeightOffset(vehicle, timelineTick);
                 view.transform.position = position;
                 view.transform.rotation = Quaternion.Lerp(
@@ -375,17 +380,20 @@ namespace ParkingSim.Runtime
         private float ServiceHeightOffset(int vehicle, float tick)
         {
             PipelinedMissionV2 mission = _missions[vehicle];
+            float liftHeight = _robotUsesCustomView[mission.RobotIndex]
+                ? 0.04f
+                : 0.18f;
             float pickupStart = mission.LiftTick - _problem.Timing.LiftServiceTicks;
             if (tick >= pickupStart && tick < mission.LiftTick)
             {
                 float progress = Mathf.InverseLerp(pickupStart, mission.LiftTick, tick);
-                return Mathf.SmoothStep(0f, 0.18f, progress);
+                return Mathf.SmoothStep(0f, liftHeight, progress);
             }
             float releaseStart = mission.DropTick - _problem.Timing.DropServiceTicks;
             if (tick >= releaseStart && tick < mission.DropTick)
             {
                 float progress = Mathf.InverseLerp(releaseStart, mission.DropTick, tick);
-                return Mathf.SmoothStep(0f, -0.18f, progress);
+                return Mathf.SmoothStep(0f, -liftHeight, progress);
             }
             return 0f;
         }
@@ -404,9 +412,9 @@ namespace ParkingSim.Runtime
                     ? new Color(1f, 0.72f, 0.08f)
                     : new Color(0.20f, 1f, 0.50f));
                 float pulse = 0.85f + 0.25f * Mathf.Sin(Time.unscaledTime * 8f);
-                float radius = _robotUsesCustomView[robot] ? 0.12f : 0.30f;
-                float baseHeight = _robotUsesCustomView[robot] ? 0.12f : 0.30f;
-                float progressHeight = _robotUsesCustomView[robot] ? 0.18f : 0.50f;
+                float radius = _robotUsesCustomView[robot] ? 0.06f : 0.30f;
+                float baseHeight = _robotUsesCustomView[robot] ? 0.06f : 0.30f;
+                float progressHeight = _robotUsesCustomView[robot] ? 0.10f : 0.50f;
                 indicator.transform.localScale = new Vector3(
                     radius * pulse,
                     baseHeight + progressHeight * progress,
@@ -739,7 +747,7 @@ namespace ParkingSim.Runtime
             Track(car, SimulationVisualLayer.Shared);
             car.name = name;
             car.transform.localScale = new Vector3(1.82f, 0.42f, 0.82f);
-            car.transform.position = VehiclePosition(pose, false);
+            car.transform.position = VehiclePosition(pose, false, false);
             car.transform.rotation = VehicleRotation(pose);
             if (!primitiveFallback) return car;
             CreateChildPrimitive(
@@ -793,7 +801,7 @@ namespace ParkingSim.Runtime
                     PrimitiveType.Sphere, cube.transform, "ServiceLight-" + (robot + 1),
                     primitiveFallback
                         ? new Vector3(0f, 1.55f, 0f)
-                        : new Vector3(0f, 0.43f, 0f),
+                        : new Vector3(0f, 0.16f, 0f),
                     primitiveFallback
                         ? new Vector3(0.30f, 0.55f, 0.30f)
                         : new Vector3(0.12f, 0.18f, 0.12f),
@@ -874,9 +882,11 @@ namespace ParkingSim.Runtime
             return timeline[0];
         }
 
-        private static Vector3 RobotPosition(TimedRobotStateV2 robot)
+        private static Vector3 RobotPosition(
+            TimedRobotStateV2 robot,
+            bool customTransport)
         {
-            return new Vector3(robot.X, 0.20f, robot.Y);
+            return new Vector3(robot.X, customTransport ? 0f : 0.20f, robot.Y);
         }
 
         private static Quaternion RobotRotation(TimedRobotStateV2 robot)
@@ -886,12 +896,18 @@ namespace ParkingSim.Runtime
                 : Quaternion.Euler(0f, 90f, 0f);
         }
 
-        private static Vector3 VehiclePosition(VehiclePose pose, bool carried)
+        private static Vector3 VehiclePosition(
+            VehiclePose pose,
+            bool carried,
+            bool customTransport)
         {
             var second = pose.SecondCell;
+            float height = carried
+                ? customTransport ? 0.34f : 0.52f
+                : 0.30f;
             return new Vector3(
                 (pose.X + second.X) / 2f,
-                carried ? 0.52f : 0.30f,
+                height,
                 (pose.Y + second.Y) / 2f);
         }
 
