@@ -963,10 +963,16 @@ namespace ParkingSim.Runtime
                 customVisual.transform.SetParent(
                     car.transform,
                     worldPositionStays: true);
+                customVisual.transform.localRotation = Quaternion.identity;
                 FitVisualToBounds(
                     customVisual,
-                    new Vector3(0f, -0.22f, 0f),
-                    new Vector3(1.82f, 0.62f, 0.82f));
+                    Vector3.zero,
+                    new Vector3(0.82f, 0.62f, 1.82f));
+                customVisual.transform.localRotation =
+                    Quaternion.Euler(0f, 90f, 0f);
+                AlignVisualToBottomCenter(
+                    customVisual,
+                    new Vector3(0f, -0.22f, 0f));
                 DisableColliders(customVisual);
             }
             else
@@ -988,6 +994,25 @@ namespace ParkingSim.Runtime
                 new Vector3(0.06f, 0.54f, 0.76f),
                 new Color(0.92f, 0.92f, 0.78f));
             return car;
+        }
+
+        private static void AlignVisualToBottomCenter(
+            GameObject visual,
+            Vector3 targetBottomCenter)
+        {
+            Renderer[] renderers = visual.GetComponentsInChildren<Renderer>(true);
+            if (renderers.Length == 0)
+            {
+                visual.transform.position = targetBottomCenter;
+                return;
+            }
+            Bounds bounds = renderers[0].bounds;
+            for (int index = 1; index < renderers.Length; index++)
+                bounds.Encapsulate(renderers[index].bounds);
+            visual.transform.position += new Vector3(
+                targetBottomCenter.x - bounds.center.x,
+                targetBottomCenter.y - bounds.min.y,
+                targetBottomCenter.z - bounds.center.z);
         }
 
         private void BuildRobots()
