@@ -29,6 +29,7 @@ namespace ParkingSim.Runtime
         private sealed class PreparedScenario
         {
             public int BuildingId;
+            public int BlockingVehicleCount;
             public bool IncludeSecondaryEntrances;
             public ApartmentComplexScenarioV2 Complex;
             public ApartmentComplexPlanResultV2 ComplexPlan;
@@ -70,6 +71,8 @@ namespace ParkingSim.Runtime
         private int _additionalVehicleCount;
         private (int X, int Y) _fireCell;
         private int _fireBuildingId;
+        private int _blockingVehicleCount;
+        private int _requestedBlockingVehicleCount;
         private bool _includeSecondaryEntrances;
         private string _inputStatus;
         private SimulationVisualMode _visualMode =
@@ -79,20 +82,27 @@ namespace ParkingSim.Runtime
         private float _time;
         private Task<PreparedScenario> _planningTask;
         private int _pendingBuildingId;
+        private int _pendingBlockingVehicleCount;
         private bool _pendingIncludeSecondaryEntrances;
         private float _planningStartedAt;
-        private static readonly Rect GuideBounds = new Rect(12f, 12f, 620f, 236f);
+        private static readonly Rect GuideBounds = new Rect(12f, 12f, 620f, 260f);
         private const float ControlPanelWidth = 286f;
-        private const float ControlPanelHeight = 224f;
+        private const float ControlPanelHeight = 302f;
 
         private void Start()
         {
             _timeProfile = PublishedParkingRobotTimingV2.Create(1.0);
             _fireBuildingId = 104;
-            BeginPresetLoad(1, _fireBuildingId);
+            _blockingVehicleCount =
+                ApartmentComplexScenarioFactoryV2.MaximumBlockingVehicles;
+            _requestedBlockingVehicleCount = _blockingVehicleCount;
+            BeginPresetLoad(1, _fireBuildingId, _blockingVehicleCount);
         }
 
-        private void BeginPresetLoad(int preset, int buildingId)
+        private void BeginPresetLoad(
+            int preset,
+            int buildingId,
+            int blockingVehicleCount)
         {
             if (_planningTask != null)
             {
@@ -102,16 +112,19 @@ namespace ParkingSim.Runtime
             bool includeSecondaryEntrances = preset != 0;
             OperationTimingV2 timing = _timeProfile.CreateOperationTiming();
             _pendingBuildingId = buildingId;
+            _pendingBlockingVehicleCount = blockingVehicleCount;
             _pendingIncludeSecondaryEntrances = includeSecondaryEntrances;
             _planningStartedAt = Time.realtimeSinceStartup;
             _inputStatus =
                 buildingId + "동 · " +
                 (includeSecondaryEntrances ? "서문+동문" : "서문 단일") +
-                " 경로 계산 중";
+                " · 주차 N=" + blockingVehicleCount + " 경로 계산 중";
             _planningTask = Task.Run(() =>
             {
                 ApartmentComplexScenarioV2 complex =
-                    ApartmentComplexScenarioFactoryV2.Build(timing);
+                    ApartmentComplexScenarioFactoryV2.BuildDensity(
+                        blockingVehicleCount,
+                        timing);
                 ApartmentComplexPlanResultV2 complexPlan =
                     ApartmentComplexEmergencyPlannerV2.Solve(
                         complex,
@@ -129,6 +142,7 @@ namespace ParkingSim.Runtime
                 return new PreparedScenario
                 {
                     BuildingId = buildingId,
+                    BlockingVehicleCount = blockingVehicleCount,
                     IncludeSecondaryEntrances = includeSecondaryEntrances,
                     Complex = complex,
                     ComplexPlan = complexPlan,
@@ -165,6 +179,8 @@ namespace ParkingSim.Runtime
                 return;
             }
             _fireBuildingId = prepared.BuildingId;
+            _blockingVehicleCount = prepared.BlockingVehicleCount;
+            _requestedBlockingVehicleCount = _blockingVehicleCount;
             _includeSecondaryEntrances = prepared.IncludeSecondaryEntrances;
             _complex = prepared.Complex;
             AutomaticEmergencyAccessPlanResultV2 automatic =
@@ -198,7 +214,8 @@ namespace ParkingSim.Runtime
             _plan = plan;
             _scenarioName =
                 "8동 단지 " + _fireBuildingId + "동 화재 · " +
-                (_includeSecondaryEntrances ? "서문+동문" : "서문 단일");
+                (_includeSecondaryEntrances ? "서문+동문" : "서문 단일") +
+                " · N=" + _blockingVehicleCount;
             _routeName = _selectedEntrance.Name + "/" + _selectedRoute.Name;
             _movedVehicleCount = built.SelectedVehicleCount;
             _additionalVehicleCount = _complex.BaseProblem.VehicleCount;
@@ -259,7 +276,8 @@ namespace ParkingSim.Runtime
                 {
                     BeginPresetLoad(
                         _includeSecondaryEntrances ? 1 : 0,
-                        clickedBuildingId);
+                        clickedBuildingId,
+                        _blockingVehicleCount);
                 }
                 else
                 {
@@ -1492,7 +1510,6 @@ namespace ParkingSim.Runtime
                 return;
             }
             double seconds = _timeProfile.PlanSeconds(_plan.Ticks);
-            bool safe = seconds <= 420.0;
             GUI.Label(new Rect(24f, 22f, 596f, 24f), "Model V2 — " + _scenarioName);
             GUI.Label(new Rect(24f, 46f, 596f, 24f),
                 "경로 " + _routeName + " · 이동 " + _movedVehicleCount + "/" +
@@ -1500,22 +1517,24 @@ namespace ParkingSim.Runtime
                 _plan.RobotTimelines.Length + "조");
             GUI.Label(new Rect(24f, 70f, 596f, 24f),
                 "확보 " + _plan.Ticks + "틱 / " + seconds.ToString("0.0") +
-                "초(Stanley 1m/s 참조) · 7분 " + (safe ? "통과" : "실패") +
+                "초(Stanley 1m/s 참조)" +
                 " · 재생 t=" + _displayTick.ToString("0.0"));
-            GUI.Label(new Rect(24f, 94f, 596f, 24f), ServiceStatusText());
-            GUI.Label(new Rect(24f, 118f, 596f, 24f), _inputStatus);
-            GUI.Label(new Rect(24f, 142f, 596f, 24f),
+            GUI.Label(new Rect(24f, 94f, 596f, 24f),
+                SensitivityStatusText(seconds));
+            GUI.Label(new Rect(24f, 118f, 596f, 24f), ServiceStatusText());
+            GUI.Label(new Rect(24f, 142f, 596f, 24f), _inputStatus);
+            GUI.Label(new Rect(24f, 166f, 596f, 24f),
                 "관제 청록=선택 · 파랑=대안 · 주황=이동차량 / 3D 노랑=확보경계");
             string cameraLabel = _selectedTransportCamera >= 0
                 ? "현재 유닛 " + (_selectedTransportCamera + 1)
                 : _visualMode == SimulationVisualMode.Control
                     ? "현재 관제모드"
                     : "현재 3D모드";
-            GUI.Label(new Rect(24f, 166f, 596f, 24f),
-                "[1~4] 운송유닛 추적 카메라  ·  " + cameraLabel);
             GUI.Label(new Rect(24f, 190f, 596f, 24f),
+                "[1~4] 운송유닛 추적 카메라  ·  " + cameraLabel);
+            GUI.Label(new Rect(24f, 214f, 596f, 24f),
                 "[WASD] 기준점 이동  [우클릭 드래그] 회전  [휠] 빠른 줌  [Shift] 가속");
-            GUI.Label(new Rect(24f, 214f, 596f, 20f),
+            GUI.Label(new Rect(24f, 238f, 596f, 20f),
                 "[Space] 일시정지/재생  [R] 처음부터");
         }
 
@@ -1558,15 +1577,46 @@ namespace ParkingSim.Runtime
                     "서문 단일",
                     !shownSecondary,
                     canReplan))
-                BeginPresetLoad(0, _fireBuildingId);
+                BeginPresetLoad(0, _fireBuildingId, _blockingVehicleCount);
             if (DrawActionButton(
                     new Rect(x + 132f, y, 124f, 32f),
                     "서문+동문",
                     shownSecondary,
                     canReplan))
-                BeginPresetLoad(1, _fireBuildingId);
+                BeginPresetLoad(1, _fireBuildingId, _blockingVehicleCount);
 
             y += 42f;
+            GUI.Label(new Rect(x, y, 260f, 22f), "진입로 가변주차 밀도");
+            y += 22f;
+            bool previousEnabled = GUI.enabled;
+            GUI.enabled = canReplan;
+            float selectedDensity = GUI.HorizontalSlider(
+                new Rect(x, y + 4f, 196f, 20f),
+                _requestedBlockingVehicleCount,
+                0f,
+                ApartmentComplexScenarioFactoryV2.MaximumBlockingVehicles);
+            _requestedBlockingVehicleCount = Mathf.RoundToInt(selectedDensity);
+            GUI.enabled = previousEnabled;
+            GUI.Label(
+                new Rect(x + 204f, y, 52f, 22f),
+                _requestedBlockingVehicleCount + "/22대");
+            y += 26f;
+            bool densityApplied =
+                _planningTask == null &&
+                _requestedBlockingVehicleCount == _blockingVehicleCount;
+            if (DrawActionButton(
+                    new Rect(x, y, 256f, 30f),
+                    densityApplied
+                        ? "현재 밀도 적용됨"
+                        : "선택 밀도 적용",
+                    densityApplied,
+                    canReplan && !densityApplied))
+                BeginPresetLoad(
+                    _includeSecondaryEntrances ? 1 : 0,
+                    _fireBuildingId,
+                    _requestedBlockingVehicleCount);
+
+            y += 40f;
             GUI.Label(new Rect(x, y, 260f, 22f), "재생");
             y += 24f;
             bool canPlayback = _plan != null;
@@ -1626,7 +1676,8 @@ namespace ParkingSim.Runtime
                 _pendingBuildingId + "동 · " +
                 (_pendingIncludeSecondaryEntrances
                     ? "서문+동문 비교"
-                    : "서문 단일");
+                    : "서문 단일") +
+                " · N=" + _pendingBlockingVehicleCount;
             GUI.Label(
                 new Rect(overlay.x + 14f, overlay.y + 8f, width - 28f, 22f),
                 target + " 경로 계산 중 · " + elapsed.ToString("0.0") + "초");
@@ -1651,6 +1702,16 @@ namespace ParkingSim.Runtime
                     track.height - 4f),
                 string.Empty);
             GUI.color = previousColor;
+        }
+
+        private static string SensitivityStatusText(double seconds)
+        {
+            return "도착시간 민감도: 5분 " +
+                   (seconds <= 300.0 ? "통과" : "초과") +
+                   " · 7분(기준) " +
+                   (seconds <= 420.0 ? "통과" : "초과") +
+                   " · 9분 " +
+                   (seconds <= 540.0 ? "통과" : "초과");
         }
 
         private string ServiceStatusText()
