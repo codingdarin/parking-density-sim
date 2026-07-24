@@ -39,6 +39,14 @@ namespace ParkingSim.Runtime
             public ApartmentComplexPlanResultV2 ComplexPlan;
         }
 
+        private sealed class TransportLiftVisual
+        {
+            public Transform[] Decks;
+            public Vector3[] DeckRestPositions;
+            public Transform[] ArmPivots;
+            public float[] ArmDeploymentAngles;
+        }
+
         private EmergencyProblemV2 _problem;
         private PipelinedPlanResultV2 _plan;
         private ApartmentComplexScenarioV2 _complex;
@@ -48,10 +56,13 @@ namespace ParkingSim.Runtime
         private EmergencyAccessRouteV2 _selectedRoute;
         private IReadOnlyList<EmergencyAccessRouteV2> _candidateRoutes;
         private readonly Dictionary<int, GameObject> _carViews = new Dictionary<int, GameObject>();
+        private readonly Dictionary<int, GameObject> _carTrackingFrames =
+            new Dictionary<int, GameObject>();
         private readonly Dictionary<int, PipelinedMissionV2> _missions =
             new Dictionary<int, PipelinedMissionV2>();
         private GameObject[] _robotViews;
         private GameObject[] _robotServiceIndicators;
+        private TransportLiftVisual[] _robotLiftVisuals;
         private bool[] _robotUsesCustomView;
         private Camera[] _transportCameras;
         private int _selectedTransportCamera = -1;
@@ -215,6 +226,7 @@ namespace ParkingSim.Runtime
                 Destroy(_visualLayers.Root);
             _visualLayers = new SimulationVisualLayers();
             _carViews.Clear();
+            _carTrackingFrames.Clear();
             _missions.Clear();
             _problem = built.Problem;
             _plan = plan;
@@ -476,13 +488,24 @@ namespace ParkingSim.Runtime
                     VehiclePosition(a.Pose, a.Carried, customTransport),
                     VehiclePosition(b.Pose, b.Carried, customTransport),
                     fraction);
-                position.y += ServiceHeightOffset(vehicle, timelineTick);
+                position.y = ServiceVehicleHeight(
+                    vehicle,
+                    timelineTick,
+                    customTransport);
                 view.transform.position = position;
                 view.transform.rotation = Quaternion.Lerp(
                     VehicleRotation(a.Pose), VehicleRotation(b.Pose), fraction);
-                SetColor(view, a.Carried || b.Carried
-                    ? new Color(1f, 0.55f, 0.08f)
-                    : MovableVehicleColor(vehicle));
+                GameObject frame;
+                if (_carTrackingFrames.TryGetValue(vehicle, out frame))
+                {
+                    frame.transform.position = position;
+                    frame.transform.rotation = view.transform.rotation;
+                    SetTrackingFrameColor(
+                        frame,
+                        a.Carried || b.Carried
+                            ? new Color(0.08f, 0.92f, 1f)
+                            : new Color(1f, 0.48f, 0.04f));
+                }
             }
             ApplyServiceIndicators(timelineTick);
         }
@@ -503,25 +526,35 @@ namespace ParkingSim.Runtime
             return new VehicleVisualState(_problem.Slots[mission.DestinationSlot].Pose, false);
         }
 
-        private float ServiceHeightOffset(int vehicle, float tick)
+        private float ServiceVehicleHeight(
+            int vehicle,
+            float tick,
+            bool customTransport)
         {
             PipelinedMissionV2 mission = _missions[vehicle];
-            float liftHeight = _robotUsesCustomView[mission.RobotIndex]
-                ? 0.04f
-                : 0.18f;
+            float parkedHeight = ParkedVehicleRootHeight;
+            float carriedHeight = customTransport ? 0.44f : 0.52f;
             float pickupStart = mission.LiftTick - _problem.Timing.LiftServiceTicks;
             if (tick >= pickupStart && tick < mission.LiftTick)
             {
                 float progress = Mathf.InverseLerp(pickupStart, mission.LiftTick, tick);
-                return Mathf.SmoothStep(0f, liftHeight, progress);
+                return Mathf.SmoothStep(
+                    parkedHeight,
+                    carriedHeight,
+                    progress);
             }
             float releaseStart = mission.DropTick - _problem.Timing.DropServiceTicks;
             if (tick >= releaseStart && tick < mission.DropTick)
             {
                 float progress = Mathf.InverseLerp(releaseStart, mission.DropTick, tick);
-                return Mathf.SmoothStep(0f, -liftHeight, progress);
+                return Mathf.SmoothStep(
+                    carriedHeight,
+                    parkedHeight,
+                    progress);
             }
-            return 0f;
+            return tick >= mission.LiftTick && tick < mission.DropTick
+                ? carriedHeight
+                : parkedHeight;
         }
 
         private void ApplyServiceIndicators(float tick)
@@ -533,18 +566,91 @@ namespace ParkingSim.Runtime
                 int phase = ServicePhase(robot, tick, out progress);
                 GameObject indicator = _robotServiceIndicators[robot];
                 indicator.SetActive(phase != 0);
-                if (phase == 0) continue;
-                SetColor(indicator, phase == 1
-                    ? new Color(1f, 0.72f, 0.08f)
-                    : new Color(0.20f, 1f, 0.50f));
-                float pulse = 0.85f + 0.25f * Mathf.Sin(Time.unscaledTime * 8f);
-                float radius = _robotUsesCustomView[robot] ? 0.06f : 0.30f;
-                float baseHeight = _robotUsesCustomView[robot] ? 0.06f : 0.30f;
-                float progressHeight = _robotUsesCustomView[robot] ? 0.10f : 0.50f;
-                indicator.transform.localScale = new Vector3(
-                    radius * pulse,
-                    baseHeight + progressHeight * progress,
-                    radius * pulse);
+                if (phase != 0)
+                {
+                    SetColor(indicator, phase == 1
+                        ? new Color(1f, 0.72f, 0.08f)
+                        : new Color(0.20f, 1f, 0.50f));
+                    float pulse =
+                        0.85f + 0.25f * Mathf.Sin(Time.unscaledTime * 8f);
+                    float radius =
+                        _robotUsesCustomView[robot] ? 0.06f : 0.30f;
+                    float baseHeight =
+                        _robotUsesCustomView[robot] ? 0.06f : 0.30f;
+                    float progressHeight =
+                        _robotUsesCustomView[robot] ? 0.10f : 0.50f;
+                    indicator.transform.localScale = new Vector3(
+                        radius * pulse,
+                        baseHeight + progressHeight * progress,
+                        radius * pulse);
+                }
+                ApplyLiftMechanism(robot, tick, phase, progress);
+            }
+        }
+
+        private void ApplyLiftMechanism(
+            int robot,
+            float tick,
+            int phase,
+            float progress)
+        {
+            if (_robotLiftVisuals == null ||
+                robot < 0 ||
+                robot >= _robotLiftVisuals.Length)
+                return;
+            TransportLiftVisual liftVisual = _robotLiftVisuals[robot];
+            if (liftVisual == null) return;
+
+            int stateTick = Mathf.Clamp(
+                Mathf.FloorToInt(tick),
+                0,
+                _plan.Ticks);
+            bool carrying = StateAt(
+                _plan.RobotTimelines[robot],
+                stateTick).Carrying;
+            float armAmount;
+            float deckAmount;
+            if (phase == 1)
+            {
+                armAmount = Mathf.SmoothStep(
+                    0f,
+                    1f,
+                    Mathf.Clamp01(progress / 0.58f));
+                deckAmount = Mathf.SmoothStep(
+                    0f,
+                    1f,
+                    Mathf.Clamp01((progress - 0.42f) / 0.58f));
+            }
+            else if (phase == 2)
+            {
+                deckAmount = 1f - Mathf.SmoothStep(
+                    0f,
+                    1f,
+                    Mathf.Clamp01(progress / 0.58f));
+                armAmount = 1f - Mathf.SmoothStep(
+                    0f,
+                    1f,
+                    Mathf.Clamp01((progress - 0.42f) / 0.58f));
+            }
+            else
+            {
+                armAmount = carrying ? 1f : 0f;
+                deckAmount = carrying ? 1f : 0f;
+            }
+
+            for (int index = 0; index < liftVisual.Decks.Length; index++)
+            {
+                liftVisual.Decks[index].localPosition =
+                    liftVisual.DeckRestPositions[index] +
+                    Vector3.up * (0.10f * deckAmount);
+            }
+            for (int index = 0; index < liftVisual.ArmPivots.Length; index++)
+            {
+                liftVisual.ArmPivots[index].localRotation =
+                    Quaternion.Euler(
+                        0f,
+                        liftVisual.ArmDeploymentAngles[index] * armAmount,
+                        0f);
             }
         }
 
@@ -907,7 +1013,7 @@ namespace ParkingSim.Runtime
                     "FixedVehicle-" + (i + 1),
                     pose,
                     i);
-                SetColor(car, new Color(0.42f, 0.44f, 0.48f));
+                SetCarBodyColor(car, VehicleBodyColor(i));
             }
         }
 
@@ -920,10 +1026,63 @@ namespace ParkingSim.Runtime
                     "MovableVehicle-" + (vehicle + 1),
                     pose,
                     vehicle + _problem.FixedVehiclePoses.Count);
-                SetColor(car, MovableVehicleColor(vehicle));
+                SetCarBodyColor(
+                    car,
+                    VehicleBodyColor(
+                        vehicle + _problem.FixedVehiclePoses.Count));
                 _carViews.Add(vehicle, car);
+                _carTrackingFrames.Add(
+                    vehicle,
+                    BuildVehicleTrackingFrame(vehicle, pose));
                 BuildControlMovableVehicleMarker(vehicle, pose);
             }
+        }
+
+        private GameObject BuildVehicleTrackingFrame(
+            int vehicle,
+            VehiclePose pose)
+        {
+            var frame = new GameObject(
+                "MoveTargetFrame-" + (vehicle + 1));
+            Track(frame, SimulationVisualLayer.ThreeDimensional);
+            LineRenderer line = frame.AddComponent<LineRenderer>();
+            line.useWorldSpace = false;
+            line.loop = false;
+            line.positionCount = 16;
+            line.startWidth = 0.026f;
+            line.endWidth = 0.026f;
+            line.numCornerVertices = 2;
+            line.numCapVertices = 2;
+            line.material = CreateTrackingLineMaterial();
+            float x = 0.98f;
+            float z = 0.48f;
+            float bottom = -0.29f;
+            float top = 0.42f;
+            line.SetPositions(new[]
+            {
+                new Vector3(-x, bottom, -z),
+                new Vector3(x, bottom, -z),
+                new Vector3(x, bottom, z),
+                new Vector3(-x, bottom, z),
+                new Vector3(-x, bottom, -z),
+                new Vector3(-x, top, -z),
+                new Vector3(x, top, -z),
+                new Vector3(x, bottom, -z),
+                new Vector3(x, top, -z),
+                new Vector3(x, top, z),
+                new Vector3(x, bottom, z),
+                new Vector3(x, top, z),
+                new Vector3(-x, top, z),
+                new Vector3(-x, bottom, z),
+                new Vector3(-x, top, z),
+                new Vector3(-x, top, -z),
+            });
+            frame.transform.position = VehiclePosition(pose, false, false);
+            frame.transform.rotation = VehicleRotation(pose);
+            SetTrackingFrameColor(
+                frame,
+                new Color(1f, 0.48f, 0.04f));
+            return frame;
         }
 
         private void BuildControlMovableVehicleMarker(
@@ -1023,6 +1182,8 @@ namespace ParkingSim.Runtime
         {
             _robotViews = new GameObject[_plan.RobotTimelines.Length];
             _robotServiceIndicators = new GameObject[_plan.RobotTimelines.Length];
+            _robotLiftVisuals =
+                new TransportLiftVisual[_plan.RobotTimelines.Length];
             _robotUsesCustomView = new bool[_plan.RobotTimelines.Length];
             _transportCameras = new Camera[_plan.RobotTimelines.Length];
             _transportCameraFocusOffsets =
@@ -1059,6 +1220,8 @@ namespace ParkingSim.Runtime
                         new Vector3(1.12f, 0.26f, 1.12f),
                         new Color(0.10f, 0.12f, 0.15f));
                 }
+                _robotLiftVisuals[robot] =
+                    BuildTransportLiftVisual(cube.transform, robot);
                 GameObject indicator = CreateChildPrimitive(
                     PrimitiveType.Sphere, cube.transform, "ServiceLight-" + (robot + 1),
                     primitiveFallback
@@ -1080,6 +1243,84 @@ namespace ParkingSim.Runtime
                 _transportCameraPitches[robot] = 25f;
                 _transportCameraDistances[robot] = 2.2f;
                 ApplyTransportCameraPose(robot);
+            }
+        }
+
+        private TransportLiftVisual BuildTransportLiftVisual(
+            Transform transport,
+            int robot)
+        {
+            SetRendererEnabledByName(transport, "LiftPlate", false);
+            var assembly = new GameObject(
+                "SplitLiftAssembly-" + (robot + 1));
+            assembly.transform.SetParent(transport, worldPositionStays: false);
+            assembly.transform.localPosition = Vector3.zero;
+            assembly.transform.localRotation = Quaternion.identity;
+
+            var decks = new Transform[2];
+            var deckRestPositions = new Vector3[2];
+            var armPivots = new Transform[4];
+            var armDeploymentAngles = new float[4];
+            int armIndex = 0;
+            for (int sideIndex = 0; sideIndex < 2; sideIndex++)
+            {
+                float side = sideIndex == 0 ? -1f : 1f;
+                GameObject deck = CreateChildPrimitive(
+                    PrimitiveType.Cube,
+                    assembly.transform,
+                    "LiftDeck-" + (sideIndex + 1),
+                    new Vector3(0f, 0.015f, side * 0.30f),
+                    new Vector3(1.62f, 0.045f, 0.18f),
+                    new Color(0.20f, 0.23f, 0.27f));
+                decks[sideIndex] = deck.transform;
+                deckRestPositions[sideIndex] = deck.transform.localPosition;
+
+                for (int axleIndex = 0; axleIndex < 2; axleIndex++)
+                {
+                    float axle = axleIndex == 0 ? -0.52f : 0.52f;
+                    var pivot = new GameObject(
+                        "WheelPusherPivot-" +
+                        (sideIndex + 1) + "-" + (axleIndex + 1));
+                    pivot.transform.SetParent(
+                        deck.transform,
+                        worldPositionStays: false);
+                    pivot.transform.localPosition =
+                        new Vector3(axle, 0.045f, 0f);
+                    pivot.transform.localRotation = Quaternion.identity;
+                    CreateChildPrimitive(
+                        PrimitiveType.Cube,
+                        pivot.transform,
+                        "WheelPusherBar-" + (armIndex + 1),
+                        new Vector3(0.22f, 0f, 0f),
+                        new Vector3(0.44f, 0.052f, 0.058f),
+                        new Color(0.70f, 0.74f, 0.78f));
+                    armPivots[armIndex] = pivot.transform;
+                    armDeploymentAngles[armIndex] =
+                        side > 0f ? 90f : -90f;
+                    armIndex++;
+                }
+            }
+            DisableColliders(assembly);
+            return new TransportLiftVisual
+            {
+                Decks = decks,
+                DeckRestPositions = deckRestPositions,
+                ArmPivots = armPivots,
+                ArmDeploymentAngles = armDeploymentAngles,
+            };
+        }
+
+        private static void SetRendererEnabledByName(
+            Transform root,
+            string objectName,
+            bool enabled)
+        {
+            Transform[] transforms = root.GetComponentsInChildren<Transform>(true);
+            for (int index = 0; index < transforms.Length; index++)
+            {
+                if (transforms[index].name != objectName) continue;
+                Renderer renderer = transforms[index].GetComponent<Renderer>();
+                if (renderer != null) renderer.enabled = enabled;
             }
         }
 
@@ -1415,11 +1656,28 @@ namespace ParkingSim.Runtime
                 : Quaternion.Euler(0f, 90f, 0f);
         }
 
-        private static Color MovableVehicleColor(int vehicle)
+        private static Color VehicleBodyColor(int vehicle)
         {
-            return vehicle % 2 == 0
-                ? new Color(0.90f, 0.22f, 0.20f)
-                : new Color(0.72f, 0.18f, 0.72f);
+            switch (Mathf.Abs(vehicle) % 10)
+            {
+                case 0:
+                case 4:
+                    return new Color(0.86f, 0.87f, 0.88f);
+                case 1:
+                case 6:
+                    return new Color(0.055f, 0.060f, 0.070f);
+                case 2:
+                case 5:
+                    return new Color(0.34f, 0.36f, 0.39f);
+                case 3:
+                    return new Color(0.12f, 0.13f, 0.15f);
+                case 7:
+                    return new Color(0.60f, 0.63f, 0.66f);
+                case 8:
+                    return new Color(0.72f, 0.08f, 0.055f);
+                default:
+                    return new Color(0.055f, 0.20f, 0.60f);
+            }
         }
 
         private static Color RobotColor(int robot, bool carrying)
@@ -1435,6 +1693,52 @@ namespace ParkingSim.Runtime
             Material material = renderer.material;
             material.color = color;
             if (material.HasProperty("_BaseColor")) material.SetColor("_BaseColor", color);
+        }
+
+        private static void SetCarBodyColor(GameObject car, Color color)
+        {
+            Renderer[] renderers = car.GetComponentsInChildren<Renderer>(true);
+            for (int rendererIndex = 0;
+                 rendererIndex < renderers.Length;
+                 rendererIndex++)
+            {
+                Material[] materials = renderers[rendererIndex].materials;
+                for (int materialIndex = 0;
+                     materialIndex < materials.Length;
+                     materialIndex++)
+                {
+                    Material material = materials[materialIndex];
+                    if (material == null ||
+                        !material.name.StartsWith("Body"))
+                        continue;
+                    material.color = color;
+                    if (material.HasProperty("_BaseColor"))
+                        material.SetColor("_BaseColor", color);
+                }
+            }
+        }
+
+        private static Material CreateTrackingLineMaterial()
+        {
+            Shader shader =
+                Shader.Find("Universal Render Pipeline/Unlit");
+            if (shader == null) shader = Shader.Find("Sprites/Default");
+            if (shader == null) shader = Shader.Find("Standard");
+            return new Material(shader);
+        }
+
+        private static void SetTrackingFrameColor(
+            GameObject frame,
+            Color color)
+        {
+            LineRenderer line = frame.GetComponent<LineRenderer>();
+            if (line == null) return;
+            line.startColor = color;
+            line.endColor = color;
+            Material material = line.material;
+            material.color = color;
+            if (material.HasProperty("_BaseColor"))
+                material.SetColor("_BaseColor", color);
         }
 
         private static GameObject CreateChildPrimitive(
