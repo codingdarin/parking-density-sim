@@ -25,6 +25,10 @@ namespace ParkingSim.Runtime
 
         private const float SecondsPerTick = 0.32f;
         private const float EndHoldTicks = 5f;
+        private const float RoadSurfaceHeight = -0.02f;
+        private const float ParkedVehicleRootHeight = 0.30f;
+        private const float CustomVehicleBottomOffset =
+            RoadSurfaceHeight - ParkedVehicleRootHeight;
 
         private sealed class PreparedScenario
         {
@@ -602,7 +606,7 @@ namespace ParkingSim.Runtime
             ground.name = "ThreeDimensional-CityGround";
             ground.transform.position = new Vector3(
                 (_problem.Width - 1) * 0.5f,
-                -0.105f,
+                RoadSurfaceHeight,
                 (_problem.Height - 1) * 0.5f);
             ground.transform.localScale = new Vector3(
                 _problem.Width / 10f,
@@ -972,7 +976,7 @@ namespace ParkingSim.Runtime
                     Quaternion.Euler(0f, 90f, 0f);
                 AlignVisualToBottomCenter(
                     customVisual,
-                    new Vector3(0f, -0.22f, 0f));
+                    new Vector3(0f, CustomVehicleBottomOffset, 0f));
                 DisableColliders(customVisual);
             }
             else
@@ -1396,8 +1400,8 @@ namespace ParkingSim.Runtime
         {
             var second = pose.SecondCell;
             float height = carried
-                ? customTransport ? 0.34f : 0.52f
-                : 0.30f;
+                ? customTransport ? 0.44f : 0.52f
+                : ParkedVehicleRootHeight;
             return new Vector3(
                 (pose.X + second.X) / 2f,
                 height,
