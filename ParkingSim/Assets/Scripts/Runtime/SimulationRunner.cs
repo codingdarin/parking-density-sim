@@ -64,6 +64,7 @@ namespace ParkingSim.Runtime
         private readonly SimulationCameraController _cameraController =
             new SimulationCameraController();
         private GameObject _fireMarker;
+        private bool _fireUsesCustomView;
         private Camera _presentationCamera;
         private string _scenarioName;
         private string _routeName;
@@ -116,9 +117,10 @@ namespace ParkingSim.Runtime
             _pendingIncludeSecondaryEntrances = includeSecondaryEntrances;
             _planningStartedAt = Time.realtimeSinceStartup;
             _inputStatus =
-                buildingId + "동 · " +
-                (includeSecondaryEntrances ? "서문+동문" : "서문 단일") +
-                " · 주차 N=" + blockingVehicleCount + " 경로 계산 중";
+                buildingId + "동 화재 · " +
+                (includeSecondaryEntrances ? "서문·동문 비교" : "서문만 사용") +
+                " · 도로 주차 " + blockingVehicleCount +
+                "대 대응 계획 수립 중";
             _planningTask = Task.Run(() =>
             {
                 ApartmentComplexScenarioV2 complex =
@@ -587,27 +589,32 @@ namespace ParkingSim.Runtime
 
         private void BuildPresentationGround()
         {
-            for (int y = 0; y < _problem.Height; y++)
+            Material asphalt =
+                SimulationVisualAssetFactory.TryCreateAsphaltMaterial();
+            if (asphalt == null)
             {
-                for (int x = 0; x < _problem.Width; x++)
-                {
-                    var tile = GameObject.CreatePrimitive(PrimitiveType.Cube);
-                    Track(tile, SimulationVisualLayer.ThreeDimensional);
-                    tile.name = "PresentationCell-" + x + "-" + y;
-                    bool floor = _problem.IsFloor(x, y);
-                    float height = floor
-                        ? 0.10f
-                        : 0.62f + ((x * 7 + y * 3) % 3) * 0.10f;
-                    tile.transform.position = new Vector3(
-                        x, floor ? -0.09f : height / 2f - 0.09f, y);
-                    tile.transform.localScale = new Vector3(0.98f, height, 0.98f);
-                    SetColor(
-                        tile,
-                        floor
-                            ? new Color(0.22f, 0.24f, 0.25f)
-                            : new Color(0.35f, 0.38f, 0.40f));
-                }
+                Debug.LogWarning(
+                    "[Model V2] 도시 asphalt 재질이 없어 3D 지면을 생략함");
+                return;
             }
+            GameObject ground = GameObject.CreatePrimitive(PrimitiveType.Plane);
+            Track(ground, SimulationVisualLayer.ThreeDimensional);
+            ground.name = "ThreeDimensional-CityGround";
+            ground.transform.position = new Vector3(
+                (_problem.Width - 1) * 0.5f,
+                -0.105f,
+                (_problem.Height - 1) * 0.5f);
+            ground.transform.localScale = new Vector3(
+                _problem.Width / 10f,
+                1f,
+                _problem.Height / 10f);
+            Renderer renderer = ground.GetComponent<Renderer>();
+            renderer.material = asphalt;
+            renderer.material.mainTextureScale = new Vector2(
+                _problem.Width / 8f,
+                _problem.Height / 8f);
+            Collider collider = ground.GetComponent<Collider>();
+            if (collider != null) Destroy(collider);
         }
 
         private void BuildRouteOverlays()
@@ -645,7 +652,6 @@ namespace ParkingSim.Runtime
                 float width = maxX - minX + 0.82f;
                 float depth = maxY - minY + 0.82f;
                 float height = 8.5f + ((apartment.Id - 101) % 4) * 0.9f;
-                bool fireBuilding = apartment.Id == _fireBuildingId;
                 BuildApartmentBuilding(
                     apartment.Id + "-Apartment",
                     new Vector3(
@@ -655,15 +661,6 @@ namespace ParkingSim.Runtime
                     width,
                     depth,
                     height,
-                    floors: 9 + ((apartment.Id - 101) % 4),
-                    southColumns: 6,
-                    westColumns: 5,
-                    bodyColor: fireBuilding
-                        ? new Color(0.56f, 0.50f, 0.48f)
-                        : new Color(0.43f, 0.48f, 0.54f),
-                    accentColor: fireBuilding
-                        ? new Color(0.82f, 0.16f, 0.10f)
-                        : new Color(0.12f, 0.46f, 0.68f),
                     variant: apartment.Id - 101);
             }
         }
@@ -674,104 +671,43 @@ namespace ParkingSim.Runtime
             float width,
             float depth,
             float height,
-            int floors,
-            int southColumns,
-            int westColumns,
-            Color bodyColor,
-            Color accentColor,
             int variant)
         {
             GameObject building =
                 SimulationVisualAssetFactory.TryCreateApartment(variant, name);
-            if (building != null)
+            if (building == null)
             {
-                Track(building, SimulationVisualLayer.ThreeDimensional);
-                FitVisualToBounds(
-                    building,
-                    origin,
-                    new Vector3(width, height, depth));
-                DisableColliders(building);
-                BuildBuildingNumber(name, origin, width, height, depth);
+                Debug.LogWarning(
+                    "[Model V2] " + name +
+                    " 도시 에셋이 없어 합성 건물을 만들지 않음");
                 return;
             }
-            building = new GameObject(name);
             Track(building, SimulationVisualLayer.ThreeDimensional);
-            building.transform.position = origin;
-            CreateVisualChild(
-                PrimitiveType.Cube,
-                building.transform,
-                name + "-Body",
-                new Vector3(0f, height / 2f, 0f),
-                new Vector3(width, height, depth),
-                bodyColor);
-            CreateVisualChild(
-                PrimitiveType.Cube,
-                building.transform,
-                name + "-Roof",
-                new Vector3(0f, height + 0.16f, 0f),
-                new Vector3(width + 0.24f, 0.28f, depth + 0.24f),
-                new Color(0.18f, 0.21f, 0.25f));
-            CreateVisualChild(
-                PrimitiveType.Cube,
-                building.transform,
-                name + "-Core",
-                new Vector3(0f, height + 0.56f, 0f),
-                new Vector3(
-                    Mathf.Min(1.2f, width * 0.36f),
-                    0.80f,
-                    Mathf.Min(1.5f, depth * 0.34f)),
-                accentColor);
-
-            float floorHeight = height / floors;
-            Color windowColor = new Color(0.12f, 0.30f, 0.43f);
-            for (int floor = 0; floor < floors; floor++)
-            {
-                float y = floorHeight * (floor + 0.58f);
-                for (int column = 0; column < southColumns; column++)
-                {
-                    float x = ColumnPosition(width, southColumns, column);
-                    CreateVisualChild(
-                        PrimitiveType.Cube,
-                        building.transform,
-                        name + "-SouthWindow-" + floor + "-" + column,
-                        new Vector3(x, y, -depth / 2f - 0.025f),
-                        new Vector3(
-                            Mathf.Min(0.72f, width / (southColumns + 1) * 0.58f),
-                            floorHeight * 0.42f,
-                            0.07f),
-                        windowColor);
-                }
-                for (int column = 0; column < westColumns; column++)
-                {
-                    float z = ColumnPosition(depth, westColumns, column);
-                    CreateVisualChild(
-                        PrimitiveType.Cube,
-                        building.transform,
-                        name + "-WestWindow-" + floor + "-" + column,
-                        new Vector3(-width / 2f - 0.025f, y, z),
-                        new Vector3(
-                            0.07f,
-                            floorHeight * 0.42f,
-                            Mathf.Min(0.72f, depth / (westColumns + 1) * 0.58f)),
-                        windowColor);
-                }
-                CreateVisualChild(
-                    PrimitiveType.Cube,
-                    building.transform,
-                    name + "-FloorBand-" + floor,
-                    new Vector3(0f, floorHeight * (floor + 1f), -depth / 2f - 0.06f),
-                    new Vector3(width + 0.14f, 0.07f, 0.15f),
-                    accentColor);
-            }
-
-            CreateVisualChild(
-                PrimitiveType.Cube,
-                building.transform,
-                name + "-Entrance",
-                new Vector3(-width / 2f - 0.04f, 0.62f, 0f),
-                new Vector3(0.10f, 1.24f, Mathf.Min(1.1f, depth * 0.3f)),
-                new Color(0.08f, 0.12f, 0.16f));
+            FitVisualToBounds(
+                building,
+                origin,
+                new Vector3(width, height, depth));
+            DisableColliders(building);
+            BuildApartmentClickTarget(
+                name,
+                origin,
+                new Vector3(width, height, depth));
             BuildBuildingNumber(name, origin, width, height, depth);
+        }
+
+        private void BuildApartmentClickTarget(
+            string name,
+            Vector3 bottomCenter,
+            Vector3 size)
+        {
+            GameObject target = GameObject.CreatePrimitive(PrimitiveType.Cube);
+            Track(target, SimulationVisualLayer.ThreeDimensional);
+            target.name = name + "-ClickTarget";
+            target.transform.position =
+                bottomCenter + Vector3.up * (size.y * 0.5f);
+            target.transform.localScale = size;
+            Renderer renderer = target.GetComponent<Renderer>();
+            if (renderer != null) renderer.enabled = false;
         }
 
         private static void FitVisualToBounds(
@@ -819,11 +755,6 @@ namespace ParkingSim.Runtime
             text.characterSize = Mathf.Max(0.18f, width * 0.035f);
             text.fontSize = 64;
             text.color = Color.white;
-        }
-
-        private static float ColumnPosition(float span, int columns, int index)
-        {
-            return -span / 2f + span * (index + 1f) / (columns + 1f);
         }
 
         private void BuildRouteOverlay(
@@ -907,24 +838,36 @@ namespace ParkingSim.Runtime
             int facadeY = northRow
                 ? _fireBuilding.FootprintCells.Max(cell => cell.Y)
                 : _fireBuilding.FootprintCells.Min(cell => cell.Y);
-            var fire = GameObject.CreatePrimitive(PrimitiveType.Cylinder);
+            GameObject fire = SimulationVisualAssetFactory.TryCreateFire(
+                "Building-Fire-" + _fireBuilding.Id);
+            _fireUsesCustomView = fire != null;
+            if (fire == null)
+                fire = GameObject.CreatePrimitive(PrimitiveType.Cylinder);
             Track(fire, SimulationVisualLayer.Shared);
             fire.name = "Building-Fire-" + _fireBuilding.Id;
             fire.transform.position = new Vector3(
                 _fireBuilding.FireEngineZone.ApproachCell.X,
                 4.8f,
                 facadeY + (northRow ? 0.48f : -0.48f));
-            fire.transform.localScale = new Vector3(0.34f, 0.14f, 0.34f);
-            SetColor(fire, new Color(1f, 0.08f, 0.02f));
-            GameObject flame = CreateChildPrimitive(
-                PrimitiveType.Sphere,
-                fire.transform,
-                "Fire-Flame",
-                new Vector3(0f, 1.45f, 0f),
-                new Vector3(0.62f, 1.8f, 0.62f),
-                new Color(1f, 0.45f, 0.02f));
-            Collider flameCollider = flame.GetComponent<Collider>();
-            if (flameCollider != null) Destroy(flameCollider);
+            if (_fireUsesCustomView)
+            {
+                fire.transform.localScale = Vector3.one * 1.25f;
+                DisableColliders(fire);
+            }
+            else
+            {
+                fire.transform.localScale = new Vector3(0.34f, 0.14f, 0.34f);
+                SetColor(fire, new Color(1f, 0.08f, 0.02f));
+                GameObject flame = CreateChildPrimitive(
+                    PrimitiveType.Sphere,
+                    fire.transform,
+                    "Fire-Flame",
+                    new Vector3(0f, 1.45f, 0f),
+                    new Vector3(0.62f, 1.8f, 0.62f),
+                    new Color(1f, 0.45f, 0.02f));
+                Collider flameCollider = flame.GetComponent<Collider>();
+                if (flameCollider != null) Destroy(flameCollider);
+            }
             _fireMarker = fire;
         }
 
@@ -956,7 +899,10 @@ namespace ParkingSim.Runtime
             for (int i = 0; i < _problem.FixedVehiclePoses.Count; i++)
             {
                 VehiclePose pose = _problem.FixedVehiclePoses[i];
-                GameObject car = CreateCar("FixedVehicle-" + (i + 1), pose);
+                GameObject car = CreateCar(
+                    "FixedVehicle-" + (i + 1),
+                    pose,
+                    i);
                 SetColor(car, new Color(0.42f, 0.44f, 0.48f));
             }
         }
@@ -966,7 +912,10 @@ namespace ParkingSim.Runtime
             for (int vehicle = 0; vehicle < _problem.VehicleCount; vehicle++)
             {
                 VehiclePose pose = _problem.Slots[_problem.InitialVehicleSlots[vehicle]].Pose;
-                GameObject car = CreateCar("MovableVehicle-" + (vehicle + 1), pose);
+                GameObject car = CreateCar(
+                    "MovableVehicle-" + (vehicle + 1),
+                    pose,
+                    vehicle + _problem.FixedVehiclePoses.Count);
                 SetColor(car, MovableVehicleColor(vehicle));
                 _carViews.Add(vehicle, car);
                 BuildControlMovableVehicleMarker(vehicle, pose);
@@ -994,17 +943,37 @@ namespace ParkingSim.Runtime
             if (collider != null) Destroy(collider);
         }
 
-        private GameObject CreateCar(string name, VehiclePose pose)
+        private GameObject CreateCar(
+            string name,
+            VehiclePose pose,
+            int visualVariant)
         {
-            GameObject car = SimulationVisualAssetFactory.TryCreate(
-                SimulationVisualAssetFactory.CarResourcePath,
-                name);
-            bool primitiveFallback = car == null;
-            if (primitiveFallback)
-                car = GameObject.CreatePrimitive(PrimitiveType.Cube);
+            GameObject customVisual =
+                SimulationVisualAssetFactory.TryCreateCar(
+                    visualVariant,
+                    name + "-Visual");
+            bool primitiveFallback = customVisual == null;
+            GameObject car = primitiveFallback
+                ? GameObject.CreatePrimitive(PrimitiveType.Cube)
+                : new GameObject(name);
             Track(car, SimulationVisualLayer.Shared);
             car.name = name;
-            car.transform.localScale = new Vector3(1.82f, 0.42f, 0.82f);
+            if (customVisual != null)
+            {
+                customVisual.transform.SetParent(
+                    car.transform,
+                    worldPositionStays: true);
+                FitVisualToBounds(
+                    customVisual,
+                    new Vector3(0f, -0.22f, 0f),
+                    new Vector3(1.82f, 0.62f, 0.82f));
+                DisableColliders(customVisual);
+            }
+            else
+            {
+                car.transform.localScale =
+                    new Vector3(1.82f, 0.42f, 0.82f);
+            }
             car.transform.position = VehiclePosition(pose, false, false);
             car.transform.rotation = VehicleRotation(pose);
             if (!primitiveFallback) return car;
@@ -1212,7 +1181,7 @@ namespace ParkingSim.Runtime
                     8f,
                     78f);
                 _transportCameraDistances[index] = Mathf.Clamp(
-                    distance * Mathf.Exp(-zoom * 0.34f),
+                    distance * Mathf.Exp(-zoom * 0.85f),
                     0.85f,
                     8f);
                 ApplyTransportCameraPose(index);
@@ -1235,7 +1204,7 @@ namespace ParkingSim.Runtime
                 12f,
                 78f);
             _presentationCameraDistance = Mathf.Clamp(
-                _presentationCameraDistance * Mathf.Exp(-zoom * 0.34f),
+                _presentationCameraDistance * Mathf.Exp(-zoom * 0.85f),
                 12f,
                 110f);
             ApplyPresentationCameraPose();
@@ -1345,6 +1314,7 @@ namespace ParkingSim.Runtime
         private void AnimateFireMarker()
         {
             if (_fireMarker == null) return;
+            if (_fireUsesCustomView) return;
             float pulse = 1f + 0.12f * Mathf.Sin(Time.unscaledTime * 5f);
             _fireMarker.transform.localScale = new Vector3(
                 0.34f * pulse,
@@ -1456,25 +1426,6 @@ namespace ParkingSim.Runtime
             return child;
         }
 
-        private static GameObject CreateVisualChild(
-            PrimitiveType type,
-            Transform parent,
-            string name,
-            Vector3 localPosition,
-            Vector3 localScale,
-            Color color)
-        {
-            GameObject child = CreateChildPrimitive(
-                type, parent, name, localPosition, localScale, color);
-            Collider collider = child.GetComponent<Collider>();
-            if (collider != null)
-            {
-                collider.enabled = false;
-                Destroy(collider);
-            }
-            return child;
-        }
-
         private static void DisableColliders(GameObject root)
         {
             Collider[] colliders = root.GetComponentsInChildren<Collider>(true);
@@ -1500,42 +1451,50 @@ namespace ParkingSim.Runtime
             if (_plan == null)
             {
                 GUI.Label(new Rect(24f, 22f, 596f, 24f),
-                    "Model V2 — 아파트 단지 비상 진입 시뮬레이션");
+                    "아파트 단지 소방 진입로 확보 시뮬레이션");
                 GUI.Label(new Rect(24f, 50f, 596f, 24f),
-                    _inputStatus ?? "초기 경로를 준비하는 중");
+                    "• 준비 상태: " +
+                    (_inputStatus ?? "초기 대응 계획을 준비하고 있습니다."));
                 GUI.Label(new Rect(24f, 82f, 596f, 24f),
-                    "경로 계산이 끝나면 시뮬레이션이 자동으로 시작됩니다.");
+                    "• 진행 안내: 계획 수립이 완료되면 자동으로 재생됩니다.");
                 GUI.Label(new Rect(24f, 116f, 596f, 24f),
-                    "[WASD] 기준점 이동  [우클릭 드래그] 회전  [휠] 빠른 줌");
+                    "• 화면 조작: WASD 이동 · 우클릭 드래그 회전 · 휠 확대/축소");
                 return;
             }
             double seconds = _timeProfile.PlanSeconds(_plan.Ticks);
-            GUI.Label(new Rect(24f, 22f, 596f, 24f), "Model V2 — " + _scenarioName);
+            float progress = _plan.Ticks <= 0
+                ? 1f
+                : Mathf.Clamp01(_displayTick / _plan.Ticks);
+            GUI.Label(new Rect(24f, 22f, 596f, 24f),
+                "아파트 단지 소방 진입로 확보 시뮬레이션");
             GUI.Label(new Rect(24f, 46f, 596f, 24f),
-                "경로 " + _routeName + " · 이동 " + _movedVehicleCount + "/" +
-                _additionalVehicleCount + "대 · 운송유닛 " +
-                _plan.RobotTimelines.Length + "조");
+                "• 발생 상황: " + _fireBuildingId +
+                "동 화재 · 소방차 출입구 " +
+                EntranceDisplayName(_selectedEntrance) +
+                " · 도로 주차 " + _additionalVehicleCount + "대");
             GUI.Label(new Rect(24f, 70f, 596f, 24f),
-                "확보 " + _plan.Ticks + "틱 / " + seconds.ToString("0.0") +
-                "초(Stanley 1m/s 참조)" +
-                " · 재생 t=" + _displayTick.ToString("0.0"));
+                "• 대응 결과: 차량 " + _movedVehicleCount +
+                "대 이동 · 운송 장비 " + _plan.RobotTimelines.Length +
+                "대 투입 · 진입로 확보 " + FormatDuration(seconds) +
+                " · 재생 " + (progress * 100f).ToString("0") + "%");
             GUI.Label(new Rect(24f, 94f, 596f, 24f),
                 SensitivityStatusText(seconds));
             GUI.Label(new Rect(24f, 118f, 596f, 24f), ServiceStatusText());
-            GUI.Label(new Rect(24f, 142f, 596f, 24f), _inputStatus);
+            GUI.Label(new Rect(24f, 142f, 596f, 24f),
+                "• 계획 상태: 소방차 진입 구역까지의 접근로 선정 완료");
             GUI.Label(new Rect(24f, 166f, 596f, 24f),
-                "관제 청록=선택 · 파랑=대안 · 주황=이동차량 / 3D 노랑=확보경계");
+                "• 화면 표시: 청록=선택 경로 · 파랑=대안 · 주황=이동 차량 · 노랑=확보 경계");
             string cameraLabel = _selectedTransportCamera >= 0
-                ? "현재 유닛 " + (_selectedTransportCamera + 1)
+                ? "운송 장비 " + (_selectedTransportCamera + 1) + "번 추적 중"
                 : _visualMode == SimulationVisualMode.Control
-                    ? "현재 관제모드"
-                    : "현재 3D모드";
+                    ? "관제 화면 표시 중"
+                    : "3D 현장 화면 표시 중";
             GUI.Label(new Rect(24f, 190f, 596f, 24f),
-                "[1~4] 운송유닛 추적 카메라  ·  " + cameraLabel);
+                "• 카메라 선택: 숫자 1~4 운송 장비 추적 · " + cameraLabel);
             GUI.Label(new Rect(24f, 214f, 596f, 24f),
-                "[WASD] 기준점 이동  [우클릭 드래그] 회전  [휠] 빠른 줌  [Shift] 가속");
+                "• 화면 조작: WASD 이동 · 우클릭 드래그 회전 · 휠 확대/축소 · Shift 빠른 이동");
             GUI.Label(new Rect(24f, 238f, 596f, 20f),
-                "[Space] 일시정지/재생  [R] 처음부터");
+                "• 재생 조작: Space 일시정지/재생 · R 처음부터");
         }
 
         private void DrawControlPanel()
@@ -1544,7 +1503,7 @@ namespace ParkingSim.Runtime
             GUI.Box(panel, string.Empty);
             float x = panel.x + 12f;
             float y = panel.y + 10f;
-            GUI.Label(new Rect(x, y, 260f, 22f), "화면");
+            GUI.Label(new Rect(x, y, 260f, 22f), "화면 보기");
             y += 24f;
             if (DrawActionButton(
                     new Rect(x, y, 124f, 32f),
@@ -1566,7 +1525,7 @@ namespace ParkingSim.Runtime
             }
 
             y += 42f;
-            GUI.Label(new Rect(x, y, 260f, 22f), "소방차 진입 조건");
+            GUI.Label(new Rect(x, y, 260f, 22f), "소방차 출입구");
             y += 24f;
             bool shownSecondary = _planningTask != null
                 ? _pendingIncludeSecondaryEntrances
@@ -1574,19 +1533,19 @@ namespace ParkingSim.Runtime
             bool canReplan = _planningTask == null && _timeProfile != null;
             if (DrawActionButton(
                     new Rect(x, y, 124f, 32f),
-                    "서문 단일",
+                    "서문만 사용",
                     !shownSecondary,
                     canReplan))
                 BeginPresetLoad(0, _fireBuildingId, _blockingVehicleCount);
             if (DrawActionButton(
                     new Rect(x + 132f, y, 124f, 32f),
-                    "서문+동문",
+                    "서문·동문 비교",
                     shownSecondary,
                     canReplan))
                 BeginPresetLoad(1, _fireBuildingId, _blockingVehicleCount);
 
             y += 42f;
-            GUI.Label(new Rect(x, y, 260f, 22f), "진입로 가변주차 밀도");
+            GUI.Label(new Rect(x, y, 260f, 22f), "도로 주차 차량");
             y += 22f;
             bool previousEnabled = GUI.enabled;
             GUI.enabled = canReplan;
@@ -1599,7 +1558,7 @@ namespace ParkingSim.Runtime
             GUI.enabled = previousEnabled;
             GUI.Label(
                 new Rect(x + 204f, y, 52f, 22f),
-                _requestedBlockingVehicleCount + "/22대");
+                _requestedBlockingVehicleCount + "대");
             y += 26f;
             bool densityApplied =
                 _planningTask == null &&
@@ -1607,8 +1566,8 @@ namespace ParkingSim.Runtime
             if (DrawActionButton(
                     new Rect(x, y, 256f, 30f),
                     densityApplied
-                        ? "현재 밀도 적용됨"
-                        : "선택 밀도 적용",
+                        ? "현재 주차 대수 적용됨"
+                        : "선택한 주차 대수 적용",
                     densityApplied,
                     canReplan && !densityApplied))
                 BeginPresetLoad(
@@ -1617,7 +1576,7 @@ namespace ParkingSim.Runtime
                     _requestedBlockingVehicleCount);
 
             y += 40f;
-            GUI.Label(new Rect(x, y, 260f, 22f), "재생");
+            GUI.Label(new Rect(x, y, 260f, 22f), "재생 제어");
             y += 24f;
             bool canPlayback = _plan != null;
             if (DrawActionButton(
@@ -1675,9 +1634,9 @@ namespace ParkingSim.Runtime
             string target =
                 _pendingBuildingId + "동 · " +
                 (_pendingIncludeSecondaryEntrances
-                    ? "서문+동문 비교"
-                    : "서문 단일") +
-                " · N=" + _pendingBlockingVehicleCount;
+                    ? "서문·동문 비교"
+                    : "서문만 사용") +
+                " · 도로 주차 " + _pendingBlockingVehicleCount + "대";
             GUI.Label(
                 new Rect(overlay.x + 14f, overlay.y + 8f, width - 28f, 22f),
                 target + " 경로 계산 중 · " + elapsed.ToString("0.0") + "초");
@@ -1704,9 +1663,24 @@ namespace ParkingSim.Runtime
             GUI.color = previousColor;
         }
 
+        private static string EntranceDisplayName(
+            ApartmentComplexEntranceV2 entrance)
+        {
+            if (entrance == null) return "확인 중";
+            return entrance.IsPrimary ? "서문" : "동문";
+        }
+
+        private static string FormatDuration(double seconds)
+        {
+            if (seconds < 60.0) return seconds.ToString("0.0") + "초";
+            int minutes = (int)(seconds / 60.0);
+            double remainder = seconds - minutes * 60.0;
+            return minutes + "분 " + remainder.ToString("0.0") + "초";
+        }
+
         private static string SensitivityStatusText(double seconds)
         {
-            return "도착시간 민감도: 5분 " +
+            return "• 시간 기준: 5분 " +
                    (seconds <= 300.0 ? "통과" : "초과") +
                    " · 7분(기준) " +
                    (seconds <= 420.0 ? "통과" : "초과") +
@@ -1736,12 +1710,16 @@ namespace ParkingSim.Runtime
                 }
             }
             if (pickup > 0)
-                return "서비스: 차량 취득 " + pickup + "조 · " +
-                       (pickupProgress * 100f).ToString("0") + "% · 노랑 상태등";
+                return "• 현재 작업: 차량 들어올림 · 운송 장비 " +
+                       pickup + "대 · 진행 " +
+                       (pickupProgress * 100f).ToString("0") + "%";
             if (release > 0)
-                return "서비스: 차량 해제 " + release + "조 · " +
-                       (releaseProgress * 100f).ToString("0") + "% · 초록 상태등";
-            return _paused ? "서비스: 재생 일시정지" : "서비스: 이동/대기";
+                return "• 현재 작업: 차량 내려놓기 · 운송 장비 " +
+                       release + "대 · 진행 " +
+                       (releaseProgress * 100f).ToString("0") + "%";
+            return _paused
+                ? "• 현재 작업: 재생 일시정지"
+                : "• 현재 작업: 차량 이동 또는 다음 작업 대기";
         }
 
         private readonly struct VehicleVisualState

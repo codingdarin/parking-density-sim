@@ -9,11 +9,22 @@ namespace ParkingSim.Runtime
     /// </summary>
     public static class SimulationVisualAssetFactory
     {
-        public const string CarResourcePath = "ParkingSim/Vehicles/Car";
         public const string TransportUnitResourcePath =
             "ParkingSim/Vehicles/TransportUnit";
         public const string ApartmentResourcePath =
             "ParkingSim/Environment/Apartment";
+        public const string FireResourcePath =
+            "ParkingSim/Effects/BuildingFire";
+        public const string AsphaltResourcePath =
+            "ParkingSim/Environment/Asphalt";
+        private static readonly string[] CarResourcePaths =
+        {
+            "ParkingSim/Vehicles/Cars/Car01",
+            "ParkingSim/Vehicles/Cars/Car02",
+            "ParkingSim/Vehicles/Cars/Car03",
+            "ParkingSim/Vehicles/Cars/Car04",
+            "ParkingSim/Vehicles/Cars/Car05",
+        };
         private static readonly string[] ApartmentResourcePaths =
         {
             "ParkingSim/Environment/Apartment01",
@@ -39,38 +50,70 @@ namespace ParkingSim.Runtime
             return instance ?? TryCreate(ApartmentResourcePath, name);
         }
 
+        public static GameObject TryCreateCar(int variant, string name)
+        {
+            int index = Mathf.Abs(variant) % CarResourcePaths.Length;
+            return TryCreate(CarResourcePaths[index], name);
+        }
+
+        public static GameObject TryCreateFire(string name)
+        {
+            GameObject source = Resources.Load<GameObject>(FireResourcePath);
+            if (source == null) return null;
+            GameObject instance = Object.Instantiate(source);
+            instance.name = name;
+            return instance;
+        }
+
+        public static Material TryCreateAsphaltMaterial()
+        {
+            Material source = Resources.Load<Material>(AsphaltResourcePath);
+            if (source == null) return null;
+            Material instance = new Material(source);
+            PrepareMaterial(instance);
+            return instance;
+        }
+
         private static void PrepareMaterials(GameObject instance)
         {
-            Shader urpLit = Shader.Find("Universal Render Pipeline/Lit");
-            if (urpLit == null) return;
             foreach (Renderer renderer in instance.GetComponentsInChildren<Renderer>(true))
             {
                 foreach (Material material in renderer.materials)
-                {
-                    if (material == null || material.shader == urpLit) continue;
-                    Texture baseMap = material.HasProperty("_MainTex")
-                        ? material.GetTexture("_MainTex")
-                        : null;
-                    Texture normalMap = material.HasProperty("_BumpMap")
-                        ? material.GetTexture("_BumpMap")
-                        : null;
-                    Color baseColor = material.HasProperty("_Color")
-                        ? material.GetColor("_Color")
-                        : Color.white;
-                    float smoothness = material.HasProperty("_Glossiness")
-                        ? material.GetFloat("_Glossiness")
-                        : 0.25f;
-                    material.shader = urpLit;
-                    if (baseMap != null) material.SetTexture("_BaseMap", baseMap);
-                    if (normalMap != null)
-                    {
-                        material.SetTexture("_BumpMap", normalMap);
-                        material.EnableKeyword("_NORMALMAP");
-                    }
-                    material.SetColor("_BaseColor", baseColor);
-                    material.SetFloat("_Smoothness", smoothness);
-                }
+                    PrepareMaterial(material);
             }
+        }
+
+        private static void PrepareMaterial(Material material)
+        {
+            Shader urpLit = Shader.Find("Universal Render Pipeline/Lit");
+            if (material == null || urpLit == null || material.shader == urpLit)
+                return;
+            Texture baseMap = material.HasProperty("_MainTex")
+                ? material.GetTexture("_MainTex")
+                : null;
+            Texture normalMap = material.HasProperty("_BumpMap")
+                ? material.GetTexture("_BumpMap")
+                : null;
+            Texture occlusionMap = material.HasProperty("_OcclusionMap")
+                ? material.GetTexture("_OcclusionMap")
+                : null;
+            Color baseColor = material.HasProperty("_Color")
+                ? material.GetColor("_Color")
+                : Color.white;
+            float smoothness = material.HasProperty("_Glossiness")
+                ? material.GetFloat("_Glossiness")
+                : 0.25f;
+            material.shader = urpLit;
+            if (baseMap != null) material.SetTexture("_BaseMap", baseMap);
+            if (normalMap != null)
+            {
+                material.SetTexture("_BumpMap", normalMap);
+                material.EnableKeyword("_NORMALMAP");
+            }
+            if (occlusionMap != null)
+                material.SetTexture("_OcclusionMap", occlusionMap);
+            material.SetColor("_BaseColor", baseColor);
+            material.SetFloat("_Smoothness", smoothness);
         }
     }
 }
