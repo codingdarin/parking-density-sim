@@ -1,5 +1,6 @@
 using System.Collections.Generic;
 using System.Linq;
+using System.Threading.Tasks;
 using ParkingSim.Core.V2;
 using UnityEngine;
 #if ENABLE_INPUT_SYSTEM
@@ -25,6 +26,14 @@ namespace ParkingSim.Runtime
         private const float SecondsPerTick = 0.32f;
         private const float EndHoldTicks = 5f;
 
+        private sealed class PreparedScenario
+        {
+            public int BuildingId;
+            public bool IncludeSecondaryEntrances;
+            public ApartmentComplexScenarioV2 Complex;
+            public ApartmentComplexPlanResultV2 ComplexPlan;
+        }
+
         private EmergencyProblemV2 _problem;
         private PipelinedPlanResultV2 _plan;
         private ApartmentComplexScenarioV2 _complex;
@@ -41,6 +50,15 @@ namespace ParkingSim.Runtime
         private bool[] _robotUsesCustomView;
         private Camera[] _transportCameras;
         private int _selectedTransportCamera = -1;
+        private Vector3 _presentationCameraFocus;
+        private float _presentationCameraYaw;
+        private float _presentationCameraPitch;
+        private float _presentationCameraDistance;
+        private bool _presentationCameraNavigationInitialized;
+        private Vector3[] _transportCameraFocusOffsets;
+        private float[] _transportCameraYaws;
+        private float[] _transportCameraPitches;
+        private float[] _transportCameraDistances;
         private SimulationVisualLayers _visualLayers;
         private readonly SimulationCameraController _cameraController =
             new SimulationCameraController();
@@ -59,41 +77,96 @@ namespace ParkingSim.Runtime
         private bool _paused;
         private float _displayTick;
         private float _time;
-        private static readonly Rect HudBounds = new Rect(12f, 12f, 620f, 292f);
+        private Task<PreparedScenario> _planningTask;
+        private int _pendingBuildingId;
+        private bool _pendingIncludeSecondaryEntrances;
+        private float _planningStartedAt;
+        private static readonly Rect GuideBounds = new Rect(12f, 12f, 620f, 236f);
+        private const float ControlPanelWidth = 286f;
+        private const float ControlPanelHeight = 224f;
 
         private void Start()
         {
             _timeProfile = PublishedParkingRobotTimingV2.Create(1.0);
             _fireBuildingId = 104;
-            LoadPreset(1);
+            BeginPresetLoad(1, _fireBuildingId);
         }
 
-        private void LoadPreset(int preset)
+        private void BeginPresetLoad(int preset, int buildingId)
         {
-            _includeSecondaryEntrances = preset != 0;
-            _complex = ApartmentComplexScenarioFactoryV2.Build(
-                _timeProfile.CreateOperationTiming());
-            ApartmentComplexPlanResultV2 complexPlan =
-                ApartmentComplexEmergencyPlannerV2.Solve(
-                    _complex,
-                    new ApartmentFireIncidentV2(_fireBuildingId),
-                    _includeSecondaryEntrances,
-                    activeRobotCount: 4,
-                    generationOptions: new EmergencyAccessRouteGenerationOptionsV2
-                    {
-                        MaxRoutes = 4,
-                        MaxCenterlineAttempts = 16,
-                        MaxSearchExpansions = 100000,
-                    },
-                    maxTick: 5000);
+            if (_planningTask != null)
+            {
+                _inputStatus = "기존 경로 계산이 끝난 뒤 다시 선택해야 함";
+                return;
+            }
+            bool includeSecondaryEntrances = preset != 0;
+            OperationTimingV2 timing = _timeProfile.CreateOperationTiming();
+            _pendingBuildingId = buildingId;
+            _pendingIncludeSecondaryEntrances = includeSecondaryEntrances;
+            _planningStartedAt = Time.realtimeSinceStartup;
+            _inputStatus =
+                buildingId + "동 · " +
+                (includeSecondaryEntrances ? "서문+동문" : "서문 단일") +
+                " 경로 계산 중";
+            _planningTask = Task.Run(() =>
+            {
+                ApartmentComplexScenarioV2 complex =
+                    ApartmentComplexScenarioFactoryV2.Build(timing);
+                ApartmentComplexPlanResultV2 complexPlan =
+                    ApartmentComplexEmergencyPlannerV2.Solve(
+                        complex,
+                        new ApartmentFireIncidentV2(buildingId),
+                        includeSecondaryEntrances,
+                        activeRobotCount: 4,
+                        generationOptions:
+                            new EmergencyAccessRouteGenerationOptionsV2
+                            {
+                                MaxRoutes = 4,
+                                MaxCenterlineAttempts = 16,
+                                MaxSearchExpansions = 100000,
+                            },
+                        maxTick: 5000);
+                return new PreparedScenario
+                {
+                    BuildingId = buildingId,
+                    IncludeSecondaryEntrances = includeSecondaryEntrances,
+                    Complex = complex,
+                    ComplexPlan = complexPlan,
+                };
+            });
+        }
+
+        private void CompletePendingPlanning()
+        {
+            if (_planningTask == null || !_planningTask.IsCompleted) return;
+            Task<PreparedScenario> completed = _planningTask;
+            _planningTask = null;
+            if (completed.IsFaulted || completed.IsCanceled)
+            {
+                string reason = completed.Exception == null
+                    ? "계산이 취소됨"
+                    : completed.Exception.GetBaseException().Message;
+                _inputStatus = "경로 계산 실패: " + reason;
+                Debug.LogError("[Model V2] " + _inputStatus);
+                return;
+            }
+            ApplyPreparedScenario(completed.Result);
+        }
+
+        private void ApplyPreparedScenario(PreparedScenario prepared)
+        {
+            ApartmentComplexPlanResultV2 complexPlan = prepared.ComplexPlan;
             if (!complexPlan.Success)
             {
                 _inputStatus =
-                    _fireBuildingId + "동 자동경로 실패: " +
+                    prepared.BuildingId + "동 자동경로 실패: " +
                     complexPlan.FailReason;
                 Debug.LogWarning("[Model V2] " + _inputStatus);
                 return;
             }
+            _fireBuildingId = prepared.BuildingId;
+            _includeSecondaryEntrances = prepared.IncludeSecondaryEntrances;
+            _complex = prepared.Complex;
             AutomaticEmergencyAccessPlanResultV2 automatic =
                 complexPlan.Selected.AutomaticPlan;
             EmergencyScenarioBuildResultV2 built = automatic.Plan.Selected.Scenario;
@@ -164,6 +237,7 @@ namespace ParkingSim.Runtime
 
         private void Update()
         {
+            CompletePendingPlanning();
             int transportCamera;
             if (TransportCameraKeyPressed(out transportCamera))
                 SelectTransportCamera(transportCamera);
@@ -175,19 +249,17 @@ namespace ParkingSim.Runtime
             }
             Vector2 pointerPosition;
             if (PointerPressed(out pointerPosition) &&
-                !IsPointerOverHud(pointerPosition))
+                !IsPointerOverHud(pointerPosition) &&
+                _planningTask == null)
             {
                 int clickedBuildingId;
                 string failure;
                 if (TryResolveClickedBuilding(
                         pointerPosition, out clickedBuildingId, out failure))
                 {
-                    int previousBuildingId = _fireBuildingId;
-                    _fireBuildingId = clickedBuildingId;
-                    LoadPreset(_includeSecondaryEntrances ? 1 : 0);
-                    if (_fireBuilding == null ||
-                        _fireBuilding.Id != clickedBuildingId)
-                        _fireBuildingId = previousBuildingId;
+                    BeginPresetLoad(
+                        _includeSecondaryEntrances ? 1 : 0,
+                        clickedBuildingId);
                 }
                 else
                 {
@@ -201,6 +273,7 @@ namespace ParkingSim.Runtime
             float tick = (_time / SecondsPerTick) % cycle;
             ApplyTick(Mathf.Min(tick, _plan.Ticks));
             AnimateFireMarker();
+            UpdateCameraNavigation();
         }
 
         private static bool TransportCameraKeyPressed(out int cameraIndex)
@@ -256,12 +329,22 @@ namespace ParkingSim.Runtime
             return false;
         }
 
+        private static Rect ControlPanelBounds()
+        {
+            return new Rect(
+                Mathf.Max(12f, Screen.width - ControlPanelWidth - 12f),
+                12f,
+                ControlPanelWidth,
+                ControlPanelHeight);
+        }
+
         private static bool IsPointerOverHud(Vector2 screenPosition)
         {
             Vector2 guiPosition = new Vector2(
                 screenPosition.x,
                 Screen.height - screenPosition.y);
-            return HudBounds.Contains(guiPosition);
+            return GuideBounds.Contains(guiPosition) ||
+                   ControlPanelBounds().Contains(guiPosition);
         }
 
         private static bool PauseTogglePressed()
@@ -518,24 +601,18 @@ namespace ParkingSim.Runtime
                 BuildRouteOverlay(
                     route,
                     "CandidateRoute-" + route.Name,
-                    new Color(0.12f, 0.38f, 0.78f),
-                    0.08f,
-                    0.54f);
+                    new Color(0.10f, 0.34f, 0.82f),
+                    0.005f,
+                    0.58f);
             }
             BuildRouteOverlay(
                 _selectedRoute,
                 "SelectedRoute-" + _selectedRoute.Name,
-                new Color(0.08f, 0.88f, 0.92f),
-                0.12f,
-                0.72f,
+                new Color(0.02f, 0.92f, 0.94f),
+                0.025f,
+                0.90f,
                 SimulationVisualLayer.Control);
-            BuildRouteOverlay(
-                _selectedRoute,
-                "ThreeDimensionalSelectedRoute-" + _selectedRoute.Name,
-                new Color(0.08f, 0.88f, 0.92f),
-                0.11f,
-                0.46f,
-                SimulationVisualLayer.ThreeDimensional);
+            BuildThreeDimensionalRouteBoundary(_selectedRoute);
         }
 
         private void BuildApartmentContext()
@@ -746,11 +823,63 @@ namespace ParkingSim.Runtime
                 Track(marker, layer);
                 marker.name = namePrefix + "-" + index++;
                 marker.transform.position = new Vector3(cell.X, y, cell.Y);
-                marker.transform.localScale = new Vector3(scale, 0.04f, scale);
+                marker.transform.localScale = new Vector3(scale, 0.018f, scale);
                 SetColor(marker, color);
                 Collider collider = marker.GetComponent<Collider>();
                 if (collider != null) Destroy(collider);
             }
+        }
+
+        private void BuildThreeDimensionalRouteBoundary(
+            EmergencyAccessRouteV2 route)
+        {
+            var cells = new HashSet<(int X, int Y)>(route.RequiredCells);
+            Color lineColor = new Color(1f, 0.63f, 0.04f);
+            int index = 0;
+            foreach (var cell in route.RequiredCells)
+            {
+                if (!cells.Contains((cell.X - 1, cell.Y)))
+                    BuildRoadBoundarySegment(
+                        "FireLane-West-" + index,
+                        new Vector3(cell.X - 0.47f, 0.015f, cell.Y),
+                        new Vector3(0.055f, 0.014f, 0.94f),
+                        lineColor);
+                if (!cells.Contains((cell.X + 1, cell.Y)))
+                    BuildRoadBoundarySegment(
+                        "FireLane-East-" + index,
+                        new Vector3(cell.X + 0.47f, 0.015f, cell.Y),
+                        new Vector3(0.055f, 0.014f, 0.94f),
+                        lineColor);
+                if (!cells.Contains((cell.X, cell.Y - 1)))
+                    BuildRoadBoundarySegment(
+                        "FireLane-South-" + index,
+                        new Vector3(cell.X, 0.015f, cell.Y - 0.47f),
+                        new Vector3(0.94f, 0.014f, 0.055f),
+                        lineColor);
+                if (!cells.Contains((cell.X, cell.Y + 1)))
+                    BuildRoadBoundarySegment(
+                        "FireLane-North-" + index,
+                        new Vector3(cell.X, 0.015f, cell.Y + 0.47f),
+                        new Vector3(0.94f, 0.014f, 0.055f),
+                        lineColor);
+                index++;
+            }
+        }
+
+        private void BuildRoadBoundarySegment(
+            string name,
+            Vector3 position,
+            Vector3 scale,
+            Color color)
+        {
+            var segment = GameObject.CreatePrimitive(PrimitiveType.Cube);
+            Track(segment, SimulationVisualLayer.ThreeDimensional);
+            segment.name = name;
+            segment.transform.position = position;
+            segment.transform.localScale = scale;
+            SetColor(segment, color);
+            Collider collider = segment.GetComponent<Collider>();
+            if (collider != null) Destroy(collider);
         }
 
         private void BuildFireMarker()
@@ -822,7 +951,29 @@ namespace ParkingSim.Runtime
                 GameObject car = CreateCar("MovableVehicle-" + (vehicle + 1), pose);
                 SetColor(car, MovableVehicleColor(vehicle));
                 _carViews.Add(vehicle, car);
+                BuildControlMovableVehicleMarker(vehicle, pose);
             }
+        }
+
+        private void BuildControlMovableVehicleMarker(
+            int vehicle,
+            VehiclePose pose)
+        {
+            var marker = GameObject.CreatePrimitive(PrimitiveType.Cylinder);
+            Track(marker, SimulationVisualLayer.Control);
+            marker.name = "MoveTarget-" + (vehicle + 1);
+            var second = pose.SecondCell;
+            marker.transform.position = new Vector3(
+                (pose.X + second.X) / 2f,
+                0.052f,
+                (pose.Y + second.Y) / 2f);
+            marker.transform.localScale =
+                pose.Orientation == VehicleOrientation.Horizontal
+                    ? new Vector3(2.18f, 0.018f, 1.08f)
+                    : new Vector3(1.08f, 0.018f, 2.18f);
+            SetColor(marker, new Color(1f, 0.43f, 0.04f));
+            Collider collider = marker.GetComponent<Collider>();
+            if (collider != null) Destroy(collider);
         }
 
         private GameObject CreateCar(string name, VehiclePose pose)
@@ -858,6 +1009,11 @@ namespace ParkingSim.Runtime
             _robotServiceIndicators = new GameObject[_plan.RobotTimelines.Length];
             _robotUsesCustomView = new bool[_plan.RobotTimelines.Length];
             _transportCameras = new Camera[_plan.RobotTimelines.Length];
+            _transportCameraFocusOffsets =
+                new Vector3[_plan.RobotTimelines.Length];
+            _transportCameraYaws = new float[_plan.RobotTimelines.Length];
+            _transportCameraPitches = new float[_plan.RobotTimelines.Length];
+            _transportCameraDistances = new float[_plan.RobotTimelines.Length];
             for (int robot = 0; robot < _plan.RobotTimelines.Length; robot++)
             {
                 GameObject cube = SimulationVisualAssetFactory.TryCreate(
@@ -902,6 +1058,12 @@ namespace ParkingSim.Runtime
                 _robotServiceIndicators[robot] = indicator;
                 _transportCameras[robot] =
                     BuildTransportCamera(cube.transform, robot);
+                _transportCameraFocusOffsets[robot] =
+                    new Vector3(0.42f, 0.12f, 0f);
+                _transportCameraYaws[robot] = 90f;
+                _transportCameraPitches[robot] = 25f;
+                _transportCameraDistances[robot] = 2.2f;
+                ApplyTransportCameraPose(robot);
             }
         }
 
@@ -953,6 +1115,11 @@ namespace ParkingSim.Runtime
                 _problem.Height,
                 _presentationCamera);
             _presentationCamera.enabled = true;
+            if (_visualMode == SimulationVisualMode.ThreeDimensional)
+            {
+                EnsurePresentationCameraNavigation();
+                ApplyPresentationCameraPose();
+            }
             Debug.Log(
                 "[Model V2] camera=" + _presentationCamera.name +
                 (_visualMode == SimulationVisualMode.Control
@@ -983,9 +1150,178 @@ namespace ParkingSim.Runtime
                 camera.enabled = selected;
             }
             _selectedTransportCamera = cameraIndex;
+            ApplyTransportCameraPose(cameraIndex);
             _inputStatus =
                 "운송유닛 " + (cameraIndex + 1) +
                 " 추적 카메라 · 관제/3D 버튼으로 전체 화면 복귀";
+        }
+
+        private void UpdateCameraNavigation()
+        {
+            bool tracking = _selectedTransportCamera >= 0;
+            if (!tracking &&
+                _visualMode != SimulationVisualMode.ThreeDimensional)
+                return;
+
+            Vector2 move;
+            Vector2 orbit;
+            float zoom;
+            bool fast;
+            ReadCameraNavigationInput(out move, out orbit, out zoom, out fast);
+            float deltaTime = Time.unscaledDeltaTime;
+            if (tracking)
+            {
+                int index = _selectedTransportCamera;
+                if (_transportCameras == null ||
+                    index >= _transportCameras.Length)
+                    return;
+                float distance = _transportCameraDistances[index];
+                float speed =
+                    Mathf.Max(0.55f, distance * 0.62f) *
+                    deltaTime * (fast ? 2.5f : 1f);
+                Quaternion heading = Quaternion.Euler(
+                    0f, _transportCameraYaws[index], 0f);
+                Vector3 offset = _transportCameraFocusOffsets[index];
+                offset +=
+                    (heading * Vector3.right * move.x +
+                     heading * Vector3.forward * move.y) * speed;
+                offset.x = Mathf.Clamp(offset.x, -5f, 5f);
+                offset.z = Mathf.Clamp(offset.z, -5f, 5f);
+                _transportCameraFocusOffsets[index] = offset;
+                _transportCameraYaws[index] += orbit.x;
+                _transportCameraPitches[index] = Mathf.Clamp(
+                    _transportCameraPitches[index] - orbit.y,
+                    8f,
+                    78f);
+                _transportCameraDistances[index] = Mathf.Clamp(
+                    distance * Mathf.Exp(-zoom * 0.34f),
+                    0.85f,
+                    8f);
+                ApplyTransportCameraPose(index);
+                return;
+            }
+
+            EnsurePresentationCameraNavigation();
+            float presentationSpeed =
+                Mathf.Max(3f, _presentationCameraDistance * 0.34f) *
+                deltaTime * (fast ? 2.5f : 1f);
+            Quaternion presentationHeading =
+                Quaternion.Euler(0f, _presentationCameraYaw, 0f);
+            _presentationCameraFocus +=
+                (presentationHeading * Vector3.right * move.x +
+                 presentationHeading * Vector3.forward * move.y) *
+                presentationSpeed;
+            _presentationCameraYaw += orbit.x;
+            _presentationCameraPitch = Mathf.Clamp(
+                _presentationCameraPitch - orbit.y,
+                12f,
+                78f);
+            _presentationCameraDistance = Mathf.Clamp(
+                _presentationCameraDistance * Mathf.Exp(-zoom * 0.34f),
+                12f,
+                110f);
+            ApplyPresentationCameraPose();
+        }
+
+        private void EnsurePresentationCameraNavigation()
+        {
+            if (_presentationCameraNavigationInitialized || _problem == null)
+                return;
+            _presentationCameraFocus = new Vector3(
+                (_problem.Width - 1) / 2f,
+                0f,
+                (_problem.Height - 1) / 2f);
+            _presentationCameraYaw = 0f;
+            _presentationCameraPitch = 42f;
+            _presentationCameraDistance =
+                Mathf.Max(_problem.Width, _problem.Height) * 1.15f;
+            _presentationCameraNavigationInitialized = true;
+        }
+
+        private void ApplyPresentationCameraPose()
+        {
+            if (_presentationCamera == null) return;
+            Quaternion orbit = Quaternion.Euler(
+                _presentationCameraPitch,
+                _presentationCameraYaw,
+                0f);
+            Vector3 forward = orbit * Vector3.forward;
+            _presentationCamera.transform.position =
+                _presentationCameraFocus -
+                forward * _presentationCameraDistance;
+            _presentationCamera.transform.rotation =
+                Quaternion.LookRotation(forward, Vector3.up);
+        }
+
+        private void ApplyTransportCameraPose(int index)
+        {
+            if (_transportCameras == null ||
+                _transportCameraFocusOffsets == null ||
+                index < 0 ||
+                index >= _transportCameras.Length ||
+                _transportCameras[index] == null)
+                return;
+            Quaternion orbit = Quaternion.Euler(
+                _transportCameraPitches[index],
+                _transportCameraYaws[index],
+                0f);
+            Vector3 forward = orbit * Vector3.forward;
+            Transform cameraTransform = _transportCameras[index].transform;
+            cameraTransform.localPosition =
+                _transportCameraFocusOffsets[index] -
+                forward * _transportCameraDistances[index];
+            cameraTransform.localRotation =
+                Quaternion.LookRotation(forward, Vector3.up);
+        }
+
+        private static void ReadCameraNavigationInput(
+            out Vector2 move,
+            out Vector2 orbit,
+            out float zoom,
+            out bool fast)
+        {
+            move = Vector2.zero;
+            orbit = Vector2.zero;
+            zoom = 0f;
+            fast = false;
+#if ENABLE_INPUT_SYSTEM
+            Keyboard keyboard = Keyboard.current;
+            if (keyboard != null)
+            {
+                move.x =
+                    (keyboard.dKey.isPressed ? 1f : 0f) -
+                    (keyboard.aKey.isPressed ? 1f : 0f);
+                move.y =
+                    (keyboard.wKey.isPressed ? 1f : 0f) -
+                    (keyboard.sKey.isPressed ? 1f : 0f);
+                fast =
+                    keyboard.leftShiftKey.isPressed ||
+                    keyboard.rightShiftKey.isPressed;
+            }
+            Mouse mouse = Mouse.current;
+            if (mouse != null)
+            {
+                if (mouse.rightButton.isPressed)
+                    orbit = mouse.delta.ReadValue() * 0.16f;
+                zoom = mouse.scroll.ReadValue().y / 120f;
+            }
+#elif ENABLE_LEGACY_INPUT_MANAGER
+            move.x =
+                (Input.GetKey(KeyCode.D) ? 1f : 0f) -
+                (Input.GetKey(KeyCode.A) ? 1f : 0f);
+            move.y =
+                (Input.GetKey(KeyCode.W) ? 1f : 0f) -
+                (Input.GetKey(KeyCode.S) ? 1f : 0f);
+            fast =
+                Input.GetKey(KeyCode.LeftShift) ||
+                Input.GetKey(KeyCode.RightShift);
+            if (Input.GetMouseButton(1))
+                orbit = new Vector2(
+                    Input.GetAxis("Mouse X") * 3.2f,
+                    Input.GetAxis("Mouse Y") * 3.2f);
+            zoom = Input.GetAxis("Mouse ScrollWheel") * 10f;
+#endif
+            if (move.sqrMagnitude > 1f) move.Normalize();
         }
 
         private void AnimateFireMarker()
@@ -1135,10 +1471,28 @@ namespace ParkingSim.Runtime
 
         private void OnGUI()
         {
-            if (_plan == null) return;
+            DrawGuidePanel();
+            DrawControlPanel();
+            if (_planningTask != null) DrawPlanningOverlay();
+        }
+
+        private void DrawGuidePanel()
+        {
+            GUI.Box(GuideBounds, string.Empty);
+            if (_plan == null)
+            {
+                GUI.Label(new Rect(24f, 22f, 596f, 24f),
+                    "Model V2 — 아파트 단지 비상 진입 시뮬레이션");
+                GUI.Label(new Rect(24f, 50f, 596f, 24f),
+                    _inputStatus ?? "초기 경로를 준비하는 중");
+                GUI.Label(new Rect(24f, 82f, 596f, 24f),
+                    "경로 계산이 끝나면 시뮬레이션이 자동으로 시작됩니다.");
+                GUI.Label(new Rect(24f, 116f, 596f, 24f),
+                    "[WASD] 기준점 이동  [우클릭 드래그] 회전  [휠] 빠른 줌");
+                return;
+            }
             double seconds = _timeProfile.PlanSeconds(_plan.Ticks);
             bool safe = seconds <= 420.0;
-            GUI.Box(HudBounds, string.Empty);
             GUI.Label(new Rect(24f, 22f, 596f, 24f), "Model V2 — " + _scenarioName);
             GUI.Label(new Rect(24f, 46f, 596f, 24f),
                 "경로 " + _routeName + " · 이동 " + _movedVehicleCount + "/" +
@@ -1151,33 +1505,152 @@ namespace ParkingSim.Runtime
             GUI.Label(new Rect(24f, 94f, 596f, 24f), ServiceStatusText());
             GUI.Label(new Rect(24f, 118f, 596f, 24f), _inputStatus);
             GUI.Label(new Rect(24f, 142f, 596f, 24f),
-                "아파트동 클릭: 화재동·전용구역 자동 재계획  ·  청록: 선택");
-            GUI.Label(new Rect(24f, 170f, 56f, 24f), "화면");
-            if (GUI.Button(new Rect(78f, 166f, 88f, 28f), "관제모드"))
-            {
-                _visualMode = SimulationVisualMode.Control;
-                ApplyVisualMode();
-            }
-            if (GUI.Button(new Rect(172f, 166f, 88f, 28f), "3D모드"))
-            {
-                _visualMode = SimulationVisualMode.ThreeDimensional;
-                ApplyVisualMode();
-            }
-            GUI.Label(new Rect(278f, 170f, 54f, 24f), "진입");
-            if (GUI.Button(new Rect(326f, 166f, 116f, 28f), "서문 단일"))
-                LoadPreset(0);
-            if (GUI.Button(new Rect(448f, 166f, 166f, 28f), "서문+동문 비교"))
-                LoadPreset(1);
+                "관제 청록=선택 · 파랑=대안 · 주황=이동차량 / 3D 노랑=확보경계");
             string cameraLabel = _selectedTransportCamera >= 0
                 ? "현재 유닛 " + (_selectedTransportCamera + 1)
                 : _visualMode == SimulationVisualMode.Control
                     ? "현재 관제모드"
                     : "현재 3D모드";
-            GUI.Label(new Rect(24f, 204f, 596f, 24f),
+            GUI.Label(new Rect(24f, 166f, 596f, 24f),
                 "[1~4] 운송유닛 추적 카메라  ·  " + cameraLabel);
-            GUI.Label(new Rect(24f, 228f, 596f, 24f),
-                "[Space] " + (_paused ? "재생" : "일시정지") +
-                "  [R] 처음부터  ·  화면/진입 조건은 위 버튼으로 변경");
+            GUI.Label(new Rect(24f, 190f, 596f, 24f),
+                "[WASD] 기준점 이동  [우클릭 드래그] 회전  [휠] 빠른 줌  [Shift] 가속");
+            GUI.Label(new Rect(24f, 214f, 596f, 20f),
+                "[Space] 일시정지/재생  [R] 처음부터");
+        }
+
+        private void DrawControlPanel()
+        {
+            Rect panel = ControlPanelBounds();
+            GUI.Box(panel, string.Empty);
+            float x = panel.x + 12f;
+            float y = panel.y + 10f;
+            GUI.Label(new Rect(x, y, 260f, 22f), "화면");
+            y += 24f;
+            if (DrawActionButton(
+                    new Rect(x, y, 124f, 32f),
+                    "관제모드",
+                    _visualMode == SimulationVisualMode.Control,
+                    true))
+            {
+                _visualMode = SimulationVisualMode.Control;
+                ApplyVisualMode();
+            }
+            if (DrawActionButton(
+                    new Rect(x + 132f, y, 124f, 32f),
+                    "3D모드",
+                    _visualMode == SimulationVisualMode.ThreeDimensional,
+                    true))
+            {
+                _visualMode = SimulationVisualMode.ThreeDimensional;
+                ApplyVisualMode();
+            }
+
+            y += 42f;
+            GUI.Label(new Rect(x, y, 260f, 22f), "소방차 진입 조건");
+            y += 24f;
+            bool shownSecondary = _planningTask != null
+                ? _pendingIncludeSecondaryEntrances
+                : _includeSecondaryEntrances;
+            bool canReplan = _planningTask == null && _timeProfile != null;
+            if (DrawActionButton(
+                    new Rect(x, y, 124f, 32f),
+                    "서문 단일",
+                    !shownSecondary,
+                    canReplan))
+                BeginPresetLoad(0, _fireBuildingId);
+            if (DrawActionButton(
+                    new Rect(x + 132f, y, 124f, 32f),
+                    "서문+동문",
+                    shownSecondary,
+                    canReplan))
+                BeginPresetLoad(1, _fireBuildingId);
+
+            y += 42f;
+            GUI.Label(new Rect(x, y, 260f, 22f), "재생");
+            y += 24f;
+            bool canPlayback = _plan != null;
+            if (DrawActionButton(
+                    new Rect(x, y, 124f, 32f),
+                    _paused ? "재생" : "일시정지",
+                    _paused,
+                    canPlayback))
+                _paused = !_paused;
+            if (DrawActionButton(
+                    new Rect(x + 132f, y, 124f, 32f),
+                    "처음부터",
+                    false,
+                    canPlayback))
+            {
+                _time = 0f;
+                ApplyTick(0f);
+            }
+        }
+
+        private static bool DrawActionButton(
+            Rect rect,
+            string label,
+            bool selected,
+            bool enabled)
+        {
+            Color previousColor = GUI.color;
+            bool previousEnabled = GUI.enabled;
+            if (selected)
+            {
+                GUI.color = new Color(0.10f, 0.92f, 1f, 1f);
+                GUI.Box(new Rect(
+                    rect.x - 3f,
+                    rect.y - 3f,
+                    rect.width + 6f,
+                    rect.height + 6f), string.Empty);
+            }
+            GUI.color = previousColor;
+            GUI.enabled = enabled;
+            bool clicked = GUI.Button(rect, selected ? "● " + label : label);
+            GUI.enabled = previousEnabled;
+            return clicked;
+        }
+
+        private void DrawPlanningOverlay()
+        {
+            const float width = 420f;
+            const float height = 70f;
+            Rect overlay = new Rect(
+                (Screen.width - width) / 2f,
+                18f,
+                width,
+                height);
+            GUI.Box(overlay, string.Empty);
+            float elapsed = Time.realtimeSinceStartup - _planningStartedAt;
+            string target =
+                _pendingBuildingId + "동 · " +
+                (_pendingIncludeSecondaryEntrances
+                    ? "서문+동문 비교"
+                    : "서문 단일");
+            GUI.Label(
+                new Rect(overlay.x + 14f, overlay.y + 8f, width - 28f, 22f),
+                target + " 경로 계산 중 · " + elapsed.ToString("0.0") + "초");
+            Rect track = new Rect(
+                overlay.x + 14f,
+                overlay.y + 39f,
+                width - 28f,
+                16f);
+            GUI.Box(track, string.Empty);
+            const float segmentWidth = 92f;
+            float travel = Mathf.Max(0f, track.width - segmentWidth - 4f);
+            float offset = Mathf.PingPong(
+                Time.realtimeSinceStartup * 155f,
+                travel);
+            Color previousColor = GUI.color;
+            GUI.color = new Color(0.10f, 0.92f, 1f, 1f);
+            GUI.Box(
+                new Rect(
+                    track.x + 2f + offset,
+                    track.y + 2f,
+                    segmentWidth,
+                    track.height - 4f),
+                string.Empty);
+            GUI.color = previousColor;
         }
 
         private string ServiceStatusText()

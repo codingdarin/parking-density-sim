@@ -94,7 +94,7 @@ namespace ParkingSim.Runtime
             bool control = mode == SimulationVisualMode.Control;
             camera.orthographic = control;
             camera.orthographicSize = size;
-            camera.fieldOfView = 38f;
+            camera.fieldOfView = 42f;
             camera.nearClipPlane = 0.1f;
             camera.farClipPlane = 100f;
             camera.clearFlags = CameraClearFlags.SolidColor;
@@ -106,7 +106,11 @@ namespace ParkingSim.Runtime
             }
             else
             {
-                camera.transform.position = new Vector3(centerX, 22f, centerZ - 22f);
+                float distance = Mathf.Max(width, height) * 1.15f;
+                Quaternion orbit = Quaternion.Euler(42f, 0f, 0f);
+                Vector3 forward = orbit * Vector3.forward;
+                camera.transform.position =
+                    new Vector3(centerX, 0f, centerZ) - forward * distance;
                 camera.transform.LookAt(new Vector3(centerX, 0f, centerZ));
             }
 
