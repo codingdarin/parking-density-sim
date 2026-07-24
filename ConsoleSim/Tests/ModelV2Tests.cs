@@ -7,7 +7,7 @@ namespace ParkingSim.Tests
 {
     public static class ModelV2Tests
     {
-        public const int ExpectedGateCount = 55;
+        public const int ExpectedGateCount = 59;
 
         public static int RunAll()
         {
@@ -67,6 +67,10 @@ namespace ParkingSim.Tests
             passed += Run("53 최종비교 회계 — 정책별 상시전용비용 동일", TestFinalSurfacePolicyAccounting);
             passed += Run("54 지상 밀도 팩토리 — 차량0~14·배치4·적치 분리", TestSurfaceDensityFactory);
             passed += Run("55 지상 밀도 평가 — 0틱 개방·현실시간 결정론", TestSurfaceDensityEvaluation);
+            passed += Run("56 8동 단지 기하 — 건물·도로·전용구역 분리", TestApartmentComplexGeometry);
+            passed += Run("57 8동 단지 화재 — 동별 전용구역 자동 개통", TestApartmentComplexAllBuildings);
+            passed += Run("58 8동 단지 복수입구 — 최악시간 비악화·재현", TestApartmentComplexMultipleEntrances);
+            passed += Run("59 8동 단지 실패 — 미등록 화재동 명시적 거부", TestApartmentComplexInvalidIncident);
             Console.WriteLine(
                 $"\nV2 타당성 게이트 {passed}/{ExpectedGateCount} 통과");
             return passed;
@@ -1306,6 +1310,135 @@ namespace ParkingSim.Tests
                    first.Ticks == repeated.Ticks &&
                    Math.Abs(first.Seconds - repeated.Seconds) < 1e-9,
                 "동일 지상 밀도 입력의 현실시간 결과가 재현되지 않음");
+        }
+
+        private static void TestApartmentComplexGeometry()
+        {
+            ApartmentComplexScenarioV2 scenario =
+                ApartmentComplexScenarioFactoryV2.Build();
+            Assert(scenario.Buildings.Count == 8 &&
+                   scenario.Buildings.Select(building => building.Id)
+                       .SequenceEqual(Enumerable.Range(101, 8)),
+                "2행×4동 ID 구성이 101~108동이 아님");
+            Assert(scenario.Entrances.Count == 2 &&
+                   scenario.Entrances.Count(entrance => entrance.IsPrimary) == 1,
+                "서측 주진입구·동측 보조진입구 구성이 아님");
+            Assert(scenario.BaseProblem.VehicleCount == 22 &&
+                   scenario.BaseProblem.StagingCapacity == 12,
+                "단지 접근축 차량·적치 용량 불일치");
+
+            var allZoneCells = new HashSet<(int X, int Y)>();
+            foreach (ApartmentBuildingV2 building in scenario.Buildings)
+            {
+                Assert(building.FootprintCells.All(cell =>
+                        !scenario.BaseProblem.IsFloor(cell.X, cell.Y)),
+                    building.Id + "동 풋프린트가 주행 floor와 겹침");
+                Assert(building.FireEngineZone.Cells.All(cell =>
+                        scenario.BaseProblem.IsFloor(cell.X, cell.Y)),
+                    building.Id + "동 전용구역이 주행 floor 밖임");
+                Assert(building.FireEngineZone.Cells.All(allZoneCells.Add),
+                    building.Id + "동 전용구역이 다른 동과 겹침");
+                Assert(building.FireEngineZone.Cells.Contains(
+                        building.FireEngineZone.ApproachCell),
+                    building.Id + "동 전용구역에 접근 종점이 없음");
+                foreach (int slotId in scenario.BaseProblem.InitialVehicleSlots)
+                {
+                    VehiclePose pose = scenario.BaseProblem.Slots[slotId].Pose;
+                    Assert(!building.FireEngineZone.Cells.Contains((pose.X, pose.Y)) &&
+                           !building.FireEngineZone.Cells.Contains(pose.SecondCell),
+                        building.Id + "동 전용구역에 가변 차량이 배치됨");
+                }
+            }
+        }
+
+        private static void TestApartmentComplexAllBuildings()
+        {
+            ApartmentComplexScenarioV2 scenario =
+                ApartmentComplexScenarioFactoryV2.Build();
+            EmergencyAccessRouteGenerationOptionsV2 options = ComplexOptions();
+            foreach (ApartmentBuildingV2 building in scenario.Buildings)
+            {
+                ApartmentComplexPlanResultV2 result =
+                    ApartmentComplexEmergencyPlannerV2.Solve(
+                        scenario,
+                        new ApartmentFireIncidentV2(building.Id),
+                        includeSecondaryEntrances: false,
+                        activeRobotCount: 4,
+                        generationOptions: options,
+                        maxTick: 800);
+                Assert(result.Success, building.Id + "동 개통 실패: " + result.FailReason);
+                Assert(result.TargetZone.BuildingId == building.Id &&
+                       result.Selected.Entrance.IsPrimary,
+                    building.Id + "동 사건의 전용구역·진입구 매핑 오류");
+                EmergencyAccessRouteV2 route =
+                    result.Selected.AutomaticPlan.Plan.Selected.Route;
+                Assert(route.EntranceCell == result.Selected.Entrance.Cell &&
+                       route.FireCell == building.FireEngineZone.ApproachCell,
+                    building.Id + "동 경로가 입구→전용구역을 잇지 않음");
+                Assert(result.Selected.AutomaticPlan.Generation.Routes.Count >= 2,
+                    building.Id + "동에 서로 다른 자동 후보가 2개 미만임");
+            }
+        }
+
+        private static void TestApartmentComplexMultipleEntrances()
+        {
+            ApartmentComplexScenarioV2 scenario =
+                ApartmentComplexScenarioFactoryV2.Build();
+            EmergencyAccessRouteGenerationOptionsV2 options = ComplexOptions();
+            var incident = new ApartmentFireIncidentV2(104);
+            ApartmentComplexPlanResultV2 primary =
+                ApartmentComplexEmergencyPlannerV2.Solve(
+                    scenario, incident, false, 4, options, maxTick: 800);
+            ApartmentComplexPlanResultV2 dual =
+                ApartmentComplexEmergencyPlannerV2.Solve(
+                    scenario, incident, true, 4, options, maxTick: 800);
+            ApartmentComplexPlanResultV2 repeated =
+                ApartmentComplexEmergencyPlannerV2.Solve(
+                    scenario, incident, true, 4, options, maxTick: 800);
+            Assert(primary.Success && dual.Success && repeated.Success,
+                primary.FailReason ?? dual.FailReason ?? repeated.FailReason);
+            int primaryTicks =
+                primary.Selected.AutomaticPlan.Plan.Selected.Plan.Ticks;
+            int dualTicks = dual.Selected.AutomaticPlan.Plan.Selected.Plan.Ticks;
+            Assert(dualTicks <= primaryTicks,
+                $"복수 진입구가 단일 진입구보다 느림: {primaryTicks}→{dualTicks}");
+            Assert(dual.Attempts.Count == 2 &&
+                   dual.Attempts.Any(attempt =>
+                       attempt.Entrance.Name == "east-secondary" &&
+                       attempt.Success),
+                "동측 보조진입구 후보가 물리 비교에 포함되지 않음");
+            Assert(dual.Selected.Entrance.Name == repeated.Selected.Entrance.Name &&
+                   dual.Selected.AutomaticPlan.Plan.Selected.Route.Name ==
+                   repeated.Selected.AutomaticPlan.Plan.Selected.Route.Name &&
+                   dualTicks ==
+                   repeated.Selected.AutomaticPlan.Plan.Selected.Plan.Ticks,
+                "동일 8동 사건의 진입구·경로·시간이 재현되지 않음");
+        }
+
+        private static void TestApartmentComplexInvalidIncident()
+        {
+            ApartmentComplexScenarioV2 scenario =
+                ApartmentComplexScenarioFactoryV2.Build();
+            ApartmentComplexPlanResultV2 result =
+                ApartmentComplexEmergencyPlannerV2.Solve(
+                    scenario,
+                    new ApartmentFireIncidentV2(999),
+                    includeSecondaryEntrances: true);
+            Assert(!result.Success &&
+                   result.Failure == EmergencyAccessFailureV2.InvalidInput &&
+                   result.FailReason != null &&
+                   result.FailReason.Contains("전용구역"),
+                "미등록 화재동을 명시적 입력 실패로 반환하지 않음");
+        }
+
+        private static EmergencyAccessRouteGenerationOptionsV2 ComplexOptions()
+        {
+            return new EmergencyAccessRouteGenerationOptionsV2
+            {
+                MaxRoutes = 4,
+                MaxCenterlineAttempts = 16,
+                MaxSearchExpansions = 100000,
+            };
         }
 
         private static EmergencyProblemV2 EmptyAccessProblem(

@@ -27,7 +27,9 @@ namespace ParkingSim.Runtime
 
         private EmergencyProblemV2 _problem;
         private PipelinedPlanResultV2 _plan;
-        private SurfaceApartmentScenarioV2 _surface;
+        private ApartmentComplexScenarioV2 _complex;
+        private ApartmentBuildingV2 _fireBuilding;
+        private ApartmentComplexEntranceV2 _selectedEntrance;
         private PhysicalTimeProfileV2 _timeProfile;
         private EmergencyAccessRouteV2 _selectedRoute;
         private IReadOnlyList<EmergencyAccessRouteV2> _candidateRoutes;
@@ -47,6 +49,8 @@ namespace ParkingSim.Runtime
         private int _movedVehicleCount;
         private int _additionalVehicleCount;
         private (int X, int Y) _fireCell;
+        private int _fireBuildingId;
+        private bool _includeSecondaryEntrances;
         private string _inputStatus;
         private SimulationVisualMode _visualMode =
             SimulationVisualMode.ThreeDimensional;
@@ -57,66 +61,45 @@ namespace ParkingSim.Runtime
         private void Start()
         {
             _timeProfile = PublishedParkingRobotTimingV2.Create(1.0);
-            _fireCell = (22, 5);
+            _fireBuildingId = 104;
             LoadPreset(1);
         }
 
         private void LoadPreset(int preset)
         {
-            _surface = SurfaceApartmentScenarioFactoryV2.Build(
+            _includeSecondaryEntrances = preset != 0;
+            _complex = ApartmentComplexScenarioFactoryV2.Build(
                 _timeProfile.CreateOperationTiming());
-            EmergencyScenarioBuildResultV2 built;
-            PipelinedPlanResultV2 plan;
-            string scenarioName;
-            string routeName;
-            if (preset == 0)
+            ApartmentComplexPlanResultV2 complexPlan =
+                ApartmentComplexEmergencyPlannerV2.Solve(
+                    _complex,
+                    new ApartmentFireIncidentV2(_fireBuildingId),
+                    _includeSecondaryEntrances,
+                    activeRobotCount: 4,
+                    generationOptions: new EmergencyAccessRouteGenerationOptionsV2
+                    {
+                        MaxRoutes = 4,
+                        MaxCenterlineAttempts = 16,
+                        MaxSearchExpansions = 100000,
+                    },
+                    maxTick: 5000);
+            if (!complexPlan.Success)
             {
-                _fireCell = (22, 5);
-                scenarioName = "전면 재배치 기준선";
-                routeName = "두 접근로 전체";
-                built = new EmergencyScenarioV2(
-                    "unity-surface-full", _fireCell, _surface.FullClearanceCells)
-                    .Build(_surface.BaseProblem);
-                plan = built.Success
-                    ? PipelinedPrioritizedPlannerV2.Solve(
-                        built.Problem,
-                        activeRobotCount: 4,
-                        maxHighLevelCandidates: 8,
-                        maxTick: 5000)
-                    : null;
-                _selectedRoute = new EmergencyAccessRouteV2(
-                    "full-clearance", (1, 5), _fireCell, _surface.FullClearanceCells);
-                _candidateRoutes = new[] { _selectedRoute };
+                _inputStatus =
+                    _fireBuildingId + "동 자동경로 실패: " +
+                    complexPlan.FailReason;
+                Debug.LogWarning("[Model V2] " + _inputStatus);
+                return;
             }
-            else
-            {
-                scenarioName = "클릭 화재 자동 핵심경로";
-                AutomaticEmergencyAccessPlanResultV2 automatic =
-                    EmergencyAccessRouteGeneratorV2.Solve(
-                        _surface.BaseProblem,
-                        (1, 5),
-                        _fireCell,
-                        activeRobotCount: 4,
-                        maxHighLevelCandidates: 8,
-                        maxTick: 5000);
-                if (!automatic.Success)
-                {
-                    string attemptedFire =
-                        "(" + _fireCell.X + "," + _fireCell.Y + ")";
-                    if (_problem != null && _problem.FireCell.HasValue)
-                        _fireCell = _problem.FireCell.Value;
-                    _inputStatus =
-                        "화재 " + attemptedFire + " 자동경로 실패: " +
-                        automatic.FailReason;
-                    Debug.LogWarning("[Model V2] " + _inputStatus);
-                    return;
-                }
-                built = automatic.Plan.Selected.Scenario;
-                plan = automatic.Plan.Selected.Plan;
-                _selectedRoute = automatic.Plan.Selected.Route;
-                _candidateRoutes = automatic.Generation.Routes;
-                routeName = _selectedRoute.Name;
-            }
+            AutomaticEmergencyAccessPlanResultV2 automatic =
+                complexPlan.Selected.AutomaticPlan;
+            EmergencyScenarioBuildResultV2 built = automatic.Plan.Selected.Scenario;
+            PipelinedPlanResultV2 plan = automatic.Plan.Selected.Plan;
+            _selectedRoute = automatic.Plan.Selected.Route;
+            _candidateRoutes = automatic.Generation.Routes;
+            _selectedEntrance = complexPlan.Selected.Entrance;
+            _fireBuilding = _complex.FindBuilding(_fireBuildingId);
+            _fireCell = _fireBuilding.FireEngineZone.ApproachCell;
             if (!built.Success)
             {
                 Debug.LogError("[Model V2] 시나리오 생성 실패: " + built.FailReason);
@@ -137,12 +120,15 @@ namespace ParkingSim.Runtime
             _missions.Clear();
             _problem = built.Problem;
             _plan = plan;
-            _scenarioName = scenarioName;
-            _routeName = routeName;
+            _scenarioName =
+                "8동 단지 " + _fireBuildingId + "동 화재 · " +
+                (_includeSecondaryEntrances ? "서문+동문" : "서문 단일");
+            _routeName = _selectedEntrance.Name + "/" + _selectedRoute.Name;
             _movedVehicleCount = built.SelectedVehicleCount;
-            _additionalVehicleCount = _surface.BaseProblem.VehicleCount;
+            _additionalVehicleCount = _complex.BaseProblem.VehicleCount;
             _inputStatus =
-                "화재 (" + _fireCell.X + "," + _fireCell.Y + ") · 후보 " +
+                "화재 " + _fireBuildingId + "동 · 종점 " +
+                _fireBuilding.FireEngineZone.Name + " · 후보 " +
                 _candidateRoutes.Count + "개";
             _time = 0f;
             foreach (PipelinedMissionV2 mission in _plan.Missions)
@@ -193,12 +179,17 @@ namespace ParkingSim.Runtime
             Vector2 pointerPosition;
             if (PointerPressed(out pointerPosition))
             {
-                (int X, int Y) clickedCell;
+                int clickedBuildingId;
                 string failure;
-                if (TryResolveClickedCell(pointerPosition, out clickedCell, out failure))
+                if (TryResolveClickedBuilding(
+                        pointerPosition, out clickedBuildingId, out failure))
                 {
-                    _fireCell = clickedCell;
-                    LoadPreset(1);
+                    int previousBuildingId = _fireBuildingId;
+                    _fireBuildingId = clickedBuildingId;
+                    LoadPreset(_includeSecondaryEntrances ? 1 : 0);
+                    if (_fireBuilding == null ||
+                        _fireBuilding.Id != clickedBuildingId)
+                        _fireBuildingId = previousBuildingId;
                 }
                 else
                 {
@@ -284,37 +275,43 @@ namespace ParkingSim.Runtime
 #endif
         }
 
-        private bool TryResolveClickedCell(
+        private bool TryResolveClickedBuilding(
             Vector2 screenPosition,
-            out (int X, int Y) cell,
+            out int buildingId,
             out string failure)
         {
             Camera camera = Camera.main;
             if (camera == null) camera = Object.FindAnyObjectByType<Camera>();
             if (camera == null)
             {
-                cell = default;
-                failure = "활성 카메라가 없어 화재 위치를 선택할 수 없음";
+                buildingId = 0;
+                failure = "활성 카메라가 없어 화재동을 선택할 수 없음";
                 return false;
             }
             Ray ray = camera.ScreenPointToRay(screenPosition);
             RaycastHit hit;
             if (!Physics.Raycast(ray, out hit, 100f))
             {
-                cell = default;
-                failure = "주차장 격자를 클릭해야 함";
+                buildingId = 0;
+                failure = "아파트동을 클릭해야 함";
                 return false;
             }
-            cell = (
+            (int X, int Y) cell = (
                 Mathf.RoundToInt(hit.point.x),
                 Mathf.RoundToInt(hit.point.z));
-            if (_surface == null ||
-                !_surface.BaseProblem.IsFloor(cell.X, cell.Y))
+            ApartmentBuildingV2 building = _complex == null
+                ? null
+                : _complex.Buildings.FirstOrDefault(candidate =>
+                    candidate.FootprintCells.Contains(cell));
+            if (building == null)
             {
+                buildingId = 0;
                 failure =
-                    "선택 셀 (" + cell.X + "," + cell.Y + ")은 이동 가능 floor 밖임";
+                    "선택 위치 (" + cell.X + "," + cell.Y +
+                    ")에 등록된 아파트동이 없음";
                 return false;
             }
+            buildingId = building.Id;
             failure = null;
             return true;
         }
@@ -521,28 +518,37 @@ namespace ParkingSim.Runtime
 
         private void BuildApartmentContext()
         {
-            BuildApartmentBuilding(
-                "Fire-Apartment",
-                new Vector3(25.2f, 0f, 7f),
-                width: 3.2f,
-                depth: 8.4f,
-                height: 6.8f,
-                floors: 6,
-                southColumns: 2,
-                westColumns: 5,
-                bodyColor: new Color(0.50f, 0.54f, 0.58f),
-                accentColor: new Color(0.72f, 0.20f, 0.16f));
-            BuildApartmentBuilding(
-                "Background-Apartment",
-                new Vector3(11.5f, 0f, 15.4f),
-                width: 10.4f,
-                depth: 2.8f,
-                height: 5.6f,
-                floors: 5,
-                southColumns: 7,
-                westColumns: 2,
-                bodyColor: new Color(0.43f, 0.48f, 0.54f),
-                accentColor: new Color(0.12f, 0.46f, 0.68f));
+            if (_complex == null) return;
+            foreach (ApartmentBuildingV2 apartment in _complex.Buildings)
+            {
+                int minX = apartment.FootprintCells.Min(cell => cell.X);
+                int maxX = apartment.FootprintCells.Max(cell => cell.X);
+                int minY = apartment.FootprintCells.Min(cell => cell.Y);
+                int maxY = apartment.FootprintCells.Max(cell => cell.Y);
+                float width = maxX - minX + 0.82f;
+                float depth = maxY - minY + 0.82f;
+                float height = 8.5f + ((apartment.Id - 101) % 4) * 0.9f;
+                bool fireBuilding = apartment.Id == _fireBuildingId;
+                BuildApartmentBuilding(
+                    apartment.Id + "-Apartment",
+                    new Vector3(
+                        (minX + maxX) * 0.5f,
+                        0f,
+                        (minY + maxY) * 0.5f),
+                    width,
+                    depth,
+                    height,
+                    floors: 9 + ((apartment.Id - 101) % 4),
+                    southColumns: 6,
+                    westColumns: 5,
+                    bodyColor: fireBuilding
+                        ? new Color(0.56f, 0.50f, 0.48f)
+                        : new Color(0.43f, 0.48f, 0.54f),
+                    accentColor: fireBuilding
+                        ? new Color(0.82f, 0.16f, 0.10f)
+                        : new Color(0.12f, 0.46f, 0.68f),
+                    variant: apartment.Id - 101);
+            }
         }
 
         private void BuildApartmentBuilding(
@@ -555,17 +561,20 @@ namespace ParkingSim.Runtime
             int southColumns,
             int westColumns,
             Color bodyColor,
-            Color accentColor)
+            Color accentColor,
+            int variant)
         {
-            GameObject building = SimulationVisualAssetFactory.TryCreate(
-                SimulationVisualAssetFactory.ApartmentResourcePath,
-                name);
+            GameObject building =
+                SimulationVisualAssetFactory.TryCreateApartment(variant, name);
             if (building != null)
             {
                 Track(building, SimulationVisualLayer.ThreeDimensional);
-                building.transform.position = origin;
-                building.transform.localScale = new Vector3(width, height, depth);
+                FitVisualToBounds(
+                    building,
+                    origin,
+                    new Vector3(width, height, depth));
                 DisableColliders(building);
+                BuildBuildingNumber(name, origin, width, height, depth);
                 return;
             }
             building = new GameObject(name);
@@ -645,6 +654,54 @@ namespace ParkingSim.Runtime
                 new Vector3(-width / 2f - 0.04f, 0.62f, 0f),
                 new Vector3(0.10f, 1.24f, Mathf.Min(1.1f, depth * 0.3f)),
                 new Color(0.08f, 0.12f, 0.16f));
+            BuildBuildingNumber(name, origin, width, height, depth);
+        }
+
+        private static void FitVisualToBounds(
+            GameObject visual,
+            Vector3 targetBottomCenter,
+            Vector3 targetSize)
+        {
+            Renderer[] renderers = visual.GetComponentsInChildren<Renderer>(true);
+            if (renderers.Length == 0)
+            {
+                visual.transform.position = targetBottomCenter;
+                return;
+            }
+            Bounds bounds = renderers[0].bounds;
+            for (int index = 1; index < renderers.Length; index++)
+                bounds.Encapsulate(renderers[index].bounds);
+            visual.transform.localScale = new Vector3(
+                targetSize.x / Mathf.Max(0.001f, bounds.size.x),
+                targetSize.y / Mathf.Max(0.001f, bounds.size.y),
+                targetSize.z / Mathf.Max(0.001f, bounds.size.z));
+            bounds = renderers[0].bounds;
+            for (int index = 1; index < renderers.Length; index++)
+                bounds.Encapsulate(renderers[index].bounds);
+            visual.transform.position += new Vector3(
+                targetBottomCenter.x - bounds.center.x,
+                targetBottomCenter.y - bounds.min.y,
+                targetBottomCenter.z - bounds.center.z);
+        }
+
+        private void BuildBuildingNumber(
+            string name,
+            Vector3 bottomCenter,
+            float width,
+            float height,
+            float depth)
+        {
+            var label = new GameObject(name + "-Label");
+            Track(label, SimulationVisualLayer.ThreeDimensional);
+            label.transform.position = bottomCenter + new Vector3(
+                0f, height * 0.55f, -depth * 0.51f);
+            TextMesh text = label.AddComponent<TextMesh>();
+            text.text = name.Substring(0, 3) + "동";
+            text.anchor = TextAnchor.MiddleCenter;
+            text.alignment = TextAlignment.Center;
+            text.characterSize = Mathf.Max(0.18f, width * 0.035f);
+            text.fontSize = 64;
+            text.color = Color.white;
         }
 
         private static float ColumnPosition(float span, int columns, int index)
@@ -676,12 +733,18 @@ namespace ParkingSim.Runtime
 
         private void BuildFireMarker()
         {
-            if (!_problem.FireCell.HasValue) return;
+            if (_fireBuilding == null) return;
+            bool northRow = _fireBuilding.Id <= 104;
+            int facadeY = northRow
+                ? _fireBuilding.FootprintCells.Max(cell => cell.Y)
+                : _fireBuilding.FootprintCells.Min(cell => cell.Y);
             var fire = GameObject.CreatePrimitive(PrimitiveType.Cylinder);
             Track(fire, SimulationVisualLayer.Shared);
-            fire.name = "Fire-Origin";
+            fire.name = "Building-Fire-" + _fireBuilding.Id;
             fire.transform.position = new Vector3(
-                _problem.FireCell.Value.X, 0.16f, _problem.FireCell.Value.Y);
+                _fireBuilding.FireEngineZone.ApproachCell.X,
+                4.8f,
+                facadeY + (northRow ? 0.48f : -0.48f));
             fire.transform.localScale = new Vector3(0.34f, 0.14f, 0.34f);
             SetColor(fire, new Color(1f, 0.08f, 0.02f));
             GameObject flame = CreateChildPrimitive(
@@ -698,9 +761,13 @@ namespace ParkingSim.Runtime
 
         private void BuildEntranceMarker()
         {
+            if (_selectedEntrance == null) return;
             var gate = new GameObject("Emergency-Entrance");
             Track(gate, SimulationVisualLayer.Shared);
-            gate.transform.position = new Vector3(0.15f, 0f, 5f);
+            gate.transform.position = new Vector3(
+                _selectedEntrance.Cell.X,
+                0f,
+                _selectedEntrance.Cell.Y);
             CreateChildPrimitive(
                 PrimitiveType.Cube, gate.transform, "Entrance-Left",
                 new Vector3(0f, 0.52f, -1f),
@@ -1007,9 +1074,9 @@ namespace ParkingSim.Runtime
             GUI.Label(new Rect(24f, 94f, 516f, 24f), ServiceStatusText());
             GUI.Label(new Rect(24f, 118f, 516f, 24f), _inputStatus);
             GUI.Label(new Rect(24f, 142f, 516f, 24f),
-                "바닥 클릭: 화재 위치·자동 재계획  ·  청록: 선택  ·  파랑: 다른 후보");
+                "아파트동 클릭: 화재동·전용구역 자동 재계획  ·  청록: 선택");
             GUI.Label(new Rect(24f, 166f, 516f, 24f),
-                "[1] 기본 화재 전면 재배치  [2] 현재 화재 자동 핵심경로");
+                "[1] 서문 단일 진입  [2] 서문+동문 물리시간 비교");
             GUI.Label(new Rect(24f, 190f, 516f, 24f),
                 "[Tab/C] " +
                 (_visualMode == SimulationVisualMode.Control ? "3D모드" : "관제모드") +

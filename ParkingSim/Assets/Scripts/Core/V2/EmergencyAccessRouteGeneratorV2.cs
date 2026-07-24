@@ -360,7 +360,8 @@ namespace ParkingSim.Core.V2
                 {
                     if (!problem.IsFloor(next.X, next.Y)) continue;
                     int penalty = penalties.TryGetValue(next, out int value) ? value : 0;
-                    int nextCost = current.Cost + 1 + penalty;
+                    int nextCost =
+                        current.Cost + 1 + penalty + EdgePenalty(problem, next);
                     if (cost.TryGetValue(next, out int oldCost) && oldCost <= nextCost)
                         continue;
                     cost[next] = nextCost;
@@ -472,6 +473,18 @@ namespace ParkingSim.Core.V2
         private static int Manhattan((int X, int Y) left, (int X, int Y) right)
         {
             return Math.Abs(left.X - right.X) + Math.Abs(left.Y - right.Y);
+        }
+
+        private static int EdgePenalty(
+            EmergencyProblemV2 problem,
+            (int X, int Y) cell)
+        {
+            int missingNeighbors = 0;
+            if (!problem.IsFloor(cell.X + 1, cell.Y)) missingNeighbors++;
+            if (!problem.IsFloor(cell.X - 1, cell.Y)) missingNeighbors++;
+            if (!problem.IsFloor(cell.X, cell.Y + 1)) missingNeighbors++;
+            if (!problem.IsFloor(cell.X, cell.Y - 1)) missingNeighbors++;
+            return missingNeighbors * 2;
         }
 
         private static string Signature(IEnumerable<(int X, int Y)> cells)
