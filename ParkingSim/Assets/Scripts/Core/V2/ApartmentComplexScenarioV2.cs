@@ -101,6 +101,7 @@ namespace ParkingSim.Core.V2
         public EmergencyProblemV2 BaseProblem { get; set; }
         public IReadOnlyList<ApartmentBuildingV2> Buildings { get; set; }
         public IReadOnlyList<ApartmentComplexEntranceV2> Entrances { get; set; }
+        public int BlockingVehicleCount { get; set; }
 
         public ApartmentBuildingV2 FindBuilding(int buildingId)
         {
@@ -135,9 +136,20 @@ namespace ParkingSim.Core.V2
         public const int Width = 59;
         public const int Height = 41;
         public const int BuildingCount = 8;
+        public const int MaximumBlockingVehicles = 22;
 
         public static ApartmentComplexScenarioV2 Build(OperationTimingV2 timing = null)
         {
+            return BuildDensity(MaximumBlockingVehicles, timing);
+        }
+
+        public static ApartmentComplexScenarioV2 BuildDensity(
+            int blockingVehicleCount,
+            OperationTimingV2 timing = null)
+        {
+            if (blockingVehicleCount < 0 ||
+                blockingVehicleCount > MaximumBlockingVehicles)
+                throw new ArgumentOutOfRangeException(nameof(blockingVehicleCount));
             bool[,] floor = new bool[Width, Height];
             Fill(floor, 0, 41, 0, 1);
             Fill(floor, 0, Width - 1, 2, 4);
@@ -173,7 +185,6 @@ namespace ParkingSim.Core.V2
                 AddSlot(slots, SlotKind.Blocking, x, 10);
             foreach (int x in new[] { 15, 28, 41 })
                 AddSlot(slots, SlotKind.Blocking, x, 27);
-            int blockingCount = slots.Count;
             foreach (int x in Enumerable.Range(0, 12).Select(index => 6 + index * 3))
                 AddSlot(slots, SlotKind.Staging, x, 0);
 
@@ -182,7 +193,7 @@ namespace ParkingSim.Core.V2
                 Height,
                 floor,
                 slots,
-                Enumerable.Range(0, blockingCount),
+                Enumerable.Range(0, blockingVehicleCount),
                 new[] { (0, 1), (1, 1), (2, 1), (3, 1) },
                 Array.Empty<(int X, int Y)>(),
                 Array.Empty<VehiclePose>(),
@@ -191,6 +202,7 @@ namespace ParkingSim.Core.V2
             {
                 BaseProblem = problem,
                 Buildings = buildings,
+                BlockingVehicleCount = blockingVehicleCount,
                 Entrances = new[]
                 {
                     new ApartmentComplexEntranceV2("west-primary", (3, 18), true),
@@ -260,30 +272,142 @@ namespace ParkingSim.Core.V2
         }
     }
 
-    public static class ApartmentComplexEmergencyPlannerV2
+    /// <summary>
+    /// 차량 점유와 무관한 중심선·폭3 후보를 같은 도로 기하의 여러 평가에서 재사용한다.
+    /// floor 또는 고정 차량 구성이 다르면 재사용을 거부한다.
+    /// </summary>
+    public sealed class ApartmentComplexRouteCatalogV2
     {
-        public static ApartmentComplexPlanResultV2 Solve(
+        private readonly bool[,] _floor;
+        private readonly VehiclePose[] _fixedVehicles;
+        private readonly EmergencyAccessRouteGenerationOptionsV2 _options;
+        private readonly Dictionary<(int BuildingId, string EntranceName),
+            EmergencyAccessRouteGenerationResultV2> _generations =
+            new Dictionary<(int, string), EmergencyAccessRouteGenerationResultV2>();
+
+        public int GenerationCount { get; private set; }
+
+        public ApartmentComplexRouteCatalogV2(
+            ApartmentComplexScenarioV2 geometrySource,
+            EmergencyAccessRouteGenerationOptionsV2 options = null)
+        {
+            if (geometrySource == null || geometrySource.BaseProblem == null)
+                throw new ArgumentNullException(nameof(geometrySource));
+            _floor = geometrySource.BaseProblem.CopyFloor();
+            _fixedVehicles = geometrySource.BaseProblem.FixedVehiclePoses
+                .OrderBy(pose => pose.X)
+                .ThenBy(pose => pose.Y)
+                .ThenBy(pose => pose.Orientation)
+                .ToArray();
+            _options = options ?? new EmergencyAccessRouteGenerationOptionsV2();
+            string error = _options.Validate();
+            if (error != null) throw new ArgumentException(error, nameof(options));
+        }
+
+        internal EmergencyAccessRouteGenerationResultV2 GetOrGenerate(
             ApartmentComplexScenarioV2 scenario,
-            ApartmentFireIncidentV2 incident,
-            bool includeSecondaryEntrances,
+            ApartmentBuildingV2 building,
+            ApartmentComplexEntranceV2 entrance)
+        {
+            EnsureCompatible(scenario);
+            var key = (building.Id, entrance.Name);
+            if (_generations.TryGetValue(key, out
+                    EmergencyAccessRouteGenerationResultV2 generation))
+                return generation;
+            generation = EmergencyAccessRouteGeneratorV2.Generate(
+                scenario.BaseProblem,
+                entrance.Cell,
+                building.FireEngineZone.ApproachCell,
+                _options);
+            _generations.Add(key, generation);
+            GenerationCount++;
+            return generation;
+        }
+
+        private void EnsureCompatible(ApartmentComplexScenarioV2 scenario)
+        {
+            if (scenario == null || scenario.BaseProblem == null ||
+                scenario.BaseProblem.Width != _floor.GetLength(0) ||
+                scenario.BaseProblem.Height != _floor.GetLength(1))
+                throw new ArgumentException("후보 카탈로그와 단지 크기가 다름", nameof(scenario));
+            for (int x = 0; x < _floor.GetLength(0); x++)
+                for (int y = 0; y < _floor.GetLength(1); y++)
+                    if (scenario.BaseProblem.IsFloor(x, y) != _floor[x, y])
+                        throw new ArgumentException(
+                            "후보 카탈로그와 단지 floor가 다름", nameof(scenario));
+            VehiclePose[] fixedVehicles = scenario.BaseProblem.FixedVehiclePoses
+                .OrderBy(pose => pose.X)
+                .ThenBy(pose => pose.Y)
+                .ThenBy(pose => pose.Orientation)
+                .ToArray();
+            if (!_fixedVehicles.SequenceEqual(fixedVehicles))
+                throw new ArgumentException(
+                    "후보 카탈로그와 고정 차량 구성이 다름", nameof(scenario));
+        }
+    }
+
+    /// <summary>
+    /// 한 차량 배치에서 동×입구 물리 시도를 한 번만 계산한다.
+    /// 서문 단일과 서문+동문 집계를 함께 구할 때 서문 결과를 재사용한다.
+    /// </summary>
+    public sealed class ApartmentComplexPlanningSessionV2
+    {
+        private readonly ApartmentComplexScenarioV2 _scenario;
+        private readonly ApartmentComplexRouteCatalogV2 _routeCatalog;
+        private readonly int _activeRobotCount;
+        private readonly int _maxHighLevelCandidates;
+        private readonly int _maxTick;
+        private readonly int _maxExpansionsPerPath;
+        private readonly bool _enableLowerBoundPruning;
+        private readonly Dictionary<(int BuildingId, string EntranceName),
+            ApartmentComplexAccessAttemptV2> _attempts =
+            new Dictionary<(int, string), ApartmentComplexAccessAttemptV2>();
+
+        public int PhysicalAttemptCount { get; private set; }
+        public int AttemptCacheHitCount { get; private set; }
+        public int PhysicalPlanCount { get; private set; }
+        public int PhysicalPlanPrunedCount { get; private set; }
+        public int RouteGenerationCount => _routeCatalog.GenerationCount;
+
+        public ApartmentComplexPlanningSessionV2(
+            ApartmentComplexScenarioV2 scenario,
             int activeRobotCount = 4,
             EmergencyAccessRouteGenerationOptionsV2 generationOptions = null,
+            int maxHighLevelCandidates = 8,
             int maxTick = 2000,
-            int maxExpansionsPerPath = 200000)
+            int maxExpansionsPerPath = 200000,
+            ApartmentComplexRouteCatalogV2 routeCatalog = null,
+            bool enableLowerBoundPruning = false)
+        {
+            if (scenario == null || scenario.BaseProblem == null)
+                throw new ArgumentNullException(nameof(scenario));
+            _scenario = scenario;
+            _activeRobotCount = activeRobotCount;
+            _maxHighLevelCandidates = maxHighLevelCandidates;
+            _maxTick = maxTick;
+            _maxExpansionsPerPath = maxExpansionsPerPath;
+            _enableLowerBoundPruning = enableLowerBoundPruning;
+            _routeCatalog = routeCatalog ??
+                new ApartmentComplexRouteCatalogV2(scenario, generationOptions);
+        }
+
+        public ApartmentComplexPlanResultV2 Solve(
+            ApartmentFireIncidentV2 incident,
+            bool includeSecondaryEntrances)
         {
             var result = new ApartmentComplexPlanResultV2
             {
                 Incident = incident,
                 Attempts = Array.Empty<ApartmentComplexAccessAttemptV2>(),
             };
-            if (scenario == null || scenario.BaseProblem == null || incident == null)
+            if (incident == null)
             {
                 result.Failure = EmergencyAccessFailureV2.InvalidInput;
-                result.FailReason = "단지 시나리오와 화재 사건이 필요함";
+                result.FailReason = "화재 사건이 필요함";
                 return result;
             }
 
-            ApartmentBuildingV2 building = scenario.FindBuilding(incident.BuildingId);
+            ApartmentBuildingV2 building = _scenario.FindBuilding(incident.BuildingId);
             if (building == null || building.FireEngineZone.Facade != incident.Facade)
             {
                 result.Failure = EmergencyAccessFailureV2.InvalidInput;
@@ -292,28 +416,13 @@ namespace ParkingSim.Core.V2
             }
             result.TargetZone = building.FireEngineZone;
 
-            ApartmentComplexEntranceV2[] entrances = scenario.Entrances
+            ApartmentComplexEntranceV2[] entrances = _scenario.Entrances
                 .Where(entrance => entrance.IsPrimary || includeSecondaryEntrances)
                 .OrderBy(entrance => entrance.Name, StringComparer.Ordinal)
                 .ToArray();
             var attempts = new List<ApartmentComplexAccessAttemptV2>();
             foreach (ApartmentComplexEntranceV2 entrance in entrances)
-            {
-                AutomaticEmergencyAccessPlanResultV2 automatic =
-                    EmergencyAccessRouteGeneratorV2.Solve(
-                        scenario.BaseProblem,
-                        entrance.Cell,
-                        building.FireEngineZone.ApproachCell,
-                        activeRobotCount,
-                        generationOptions,
-                        maxTick: maxTick,
-                        maxExpansionsPerPath: maxExpansionsPerPath);
-                attempts.Add(new ApartmentComplexAccessAttemptV2
-                {
-                    Entrance = entrance,
-                    AutomaticPlan = automatic,
-                });
-            }
+                attempts.Add(GetOrSolve(building, entrance));
             result.Attempts = attempts;
 
             ApartmentComplexAccessAttemptV2 selected = attempts
@@ -345,6 +454,76 @@ namespace ParkingSim.Core.V2
                 ? "사용 가능한 단지 진입구가 없음"
                 : "모든 단지 진입구에서 전용구역 개통 계획에 실패함";
             return result;
+        }
+
+        private ApartmentComplexAccessAttemptV2 GetOrSolve(
+            ApartmentBuildingV2 building,
+            ApartmentComplexEntranceV2 entrance)
+        {
+            var key = (building.Id, entrance.Name);
+            if (_attempts.TryGetValue(key, out ApartmentComplexAccessAttemptV2 cached))
+            {
+                AttemptCacheHitCount++;
+                return cached;
+            }
+            EmergencyAccessRouteGenerationResultV2 generation =
+                _routeCatalog.GetOrGenerate(_scenario, building, entrance);
+            AutomaticEmergencyAccessPlanResultV2 automatic =
+                EmergencyAccessRouteGeneratorV2.SolveGenerated(
+                    _scenario.BaseProblem,
+                    generation,
+                    _activeRobotCount,
+                    _maxHighLevelCandidates,
+                    _maxTick,
+                    _maxExpansionsPerPath,
+                    _enableLowerBoundPruning);
+            var attempt = new ApartmentComplexAccessAttemptV2
+            {
+                Entrance = entrance,
+                AutomaticPlan = automatic,
+            };
+            _attempts.Add(key, attempt);
+            PhysicalAttemptCount++;
+            if (automatic.Plan != null)
+            {
+                PhysicalPlanCount += automatic.Plan.PhysicalPlansRun;
+                PhysicalPlanPrunedCount += automatic.Plan.PhysicalPlansPruned;
+            }
+            return attempt;
+        }
+    }
+
+    public static class ApartmentComplexEmergencyPlannerV2
+    {
+        public static ApartmentComplexPlanResultV2 Solve(
+            ApartmentComplexScenarioV2 scenario,
+            ApartmentFireIncidentV2 incident,
+            bool includeSecondaryEntrances,
+            int activeRobotCount = 4,
+            EmergencyAccessRouteGenerationOptionsV2 generationOptions = null,
+            int maxTick = 2000,
+            int maxExpansionsPerPath = 200000,
+            ApartmentComplexRouteCatalogV2 routeCatalog = null)
+        {
+            if (scenario == null || scenario.BaseProblem == null)
+            {
+                var result = new ApartmentComplexPlanResultV2
+                {
+                    Incident = incident,
+                    Attempts = Array.Empty<ApartmentComplexAccessAttemptV2>(),
+                };
+                result.Failure = EmergencyAccessFailureV2.InvalidInput;
+                result.FailReason = "단지 시나리오와 화재 사건이 필요함";
+                return result;
+            }
+            var session = new ApartmentComplexPlanningSessionV2(
+                scenario,
+                activeRobotCount,
+                generationOptions,
+                maxTick: maxTick,
+                maxExpansionsPerPath: maxExpansionsPerPath,
+                routeCatalog: routeCatalog);
+            return session.Solve(incident, includeSecondaryEntrances);
         }
     }
 }

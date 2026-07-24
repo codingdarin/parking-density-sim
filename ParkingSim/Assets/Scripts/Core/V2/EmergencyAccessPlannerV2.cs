@@ -65,6 +65,8 @@ namespace ParkingSim.Core.V2
         public EmergencyAccessRouteV2 Route { get; set; }
         public EmergencyScenarioBuildResultV2 Scenario { get; set; }
         public PipelinedPlanResultV2 Plan { get; set; }
+        public int PhysicalLowerBoundTicks { get; set; }
+        public bool PrunedByLowerBound { get; set; }
         public bool Success => Scenario != null && Scenario.Success &&
                                Plan != null && Plan.Success && Plan.PhysicallyValid;
     }
@@ -75,6 +77,8 @@ namespace ParkingSim.Core.V2
         public string FailReason { get; set; }
         public EmergencyAccessCandidateResultV2 Selected { get; set; }
         public IReadOnlyList<EmergencyAccessCandidateResultV2> Candidates { get; set; }
+        public int PhysicalPlansRun { get; set; }
+        public int PhysicalPlansPruned { get; set; }
     }
 
     /// <summary>
@@ -89,45 +93,77 @@ namespace ParkingSim.Core.V2
             int activeRobotCount,
             int maxHighLevelCandidates = 8,
             int maxTick = 2000,
-            int maxExpansionsPerPath = 200000)
+            int maxExpansionsPerPath = 200000,
+            bool enableLowerBoundPruning = false)
         {
             if (baseProblem == null) throw new ArgumentNullException(nameof(baseProblem));
             if (routes == null) throw new ArgumentNullException(nameof(routes));
-            var candidates = new List<EmergencyAccessCandidateResultV2>();
-            foreach (EmergencyAccessRouteV2 route in routes)
+            var candidates = routes.Select(route =>
             {
-                var scenario = new EmergencyScenarioV2(
-                    "access-route-" + route.Name, route.FireCell, route.RequiredCells).Build(baseProblem);
-                PipelinedPlanResultV2 plan = null;
-                if (scenario.Success)
-                {
-                    int requiredVehicles = scenario.SelectedVehicleCount;
-                    if (requiredVehicles == 0)
-                    {
-                        plan = new PipelinedPlanResultV2
-                        {
-                            Success = true,
-                            PhysicallyValid = true,
-                            Ticks = 0,
-                            FinalVehicleSlots = Array.Empty<int>(),
-                        };
-                    }
-                    else
-                    {
-                        plan = PipelinedPrioritizedPlannerV2.Solve(
-                            scenario.Problem,
-                            activeRobotCount: Math.Min(activeRobotCount, requiredVehicles),
-                            maxHighLevelCandidates: maxHighLevelCandidates,
-                            maxTick: maxTick,
-                            maxExpansionsPerPath: maxExpansionsPerPath);
-                    }
-                }
-                candidates.Add(new EmergencyAccessCandidateResultV2
+                EmergencyScenarioBuildResultV2 scenario =
+                    new EmergencyScenarioV2(
+                        "access-route-" + route.Name,
+                        route.FireCell,
+                        route.RequiredCells).Build(baseProblem);
+                int lowerBound = scenario.Success
+                    ? PhysicalLowerBoundTicks(
+                        scenario.Problem,
+                        Math.Min(activeRobotCount, scenario.SelectedVehicleCount))
+                    : 0;
+                return new EmergencyAccessCandidateResultV2
                 {
                     Route = route,
                     Scenario = scenario,
-                    Plan = plan,
-                });
+                    PhysicalLowerBoundTicks = lowerBound,
+                };
+            }).ToList();
+            int physicalPlansRun = 0;
+            int physicalPlansPruned = 0;
+            int bestTicks = int.MaxValue;
+            foreach (EmergencyAccessCandidateResultV2 candidate in candidates
+                .OrderBy(item => item.PhysicalLowerBoundTicks)
+                .ThenBy(item => item.Scenario.Success
+                    ? item.Scenario.SelectedVehicleCount
+                    : int.MaxValue)
+                .ThenBy(item => item.Route.RequiredCells.Count)
+                .ThenBy(item => item.Route.Name, StringComparer.Ordinal))
+            {
+                EmergencyScenarioBuildResultV2 scenario = candidate.Scenario;
+                if (!scenario.Success) continue;
+                int requiredVehicles = scenario.SelectedVehicleCount;
+                if (requiredVehicles == 0)
+                {
+                    candidate.Plan = new PipelinedPlanResultV2
+                    {
+                        Success = true,
+                        PhysicallyValid = true,
+                        Ticks = 0,
+                        FinalVehicleSlots = Array.Empty<int>(),
+                    };
+                    bestTicks = 0;
+                    continue;
+                }
+                if (enableLowerBoundPruning &&
+                    candidate.PhysicalLowerBoundTicks > bestTicks)
+                {
+                    candidate.PrunedByLowerBound = true;
+                    candidate.Plan = new PipelinedPlanResultV2
+                    {
+                        FailReason =
+                            "현재 최선보다 물리시간 하한이 커서 가지치기됨",
+                    };
+                    physicalPlansPruned++;
+                    continue;
+                }
+                candidate.Plan = PipelinedPrioritizedPlannerV2.Solve(
+                    scenario.Problem,
+                    activeRobotCount: Math.Min(activeRobotCount, requiredVehicles),
+                    maxHighLevelCandidates: maxHighLevelCandidates,
+                    maxTick: maxTick,
+                    maxExpansionsPerPath: maxExpansionsPerPath);
+                physicalPlansRun++;
+                if (candidate.Success && candidate.Plan.Ticks < bestTicks)
+                    bestTicks = candidate.Plan.Ticks;
             }
 
             EmergencyAccessCandidateResultV2 selected = candidates
@@ -143,7 +179,58 @@ namespace ParkingSim.Core.V2
                 FailReason = selected == null ? "물리적으로 개통 가능한 접근경로가 없음" : null,
                 Selected = selected,
                 Candidates = candidates,
+                PhysicalPlansRun = physicalPlansRun,
+                PhysicalPlansPruned = physicalPlansPruned,
             };
+        }
+
+        private static int PhysicalLowerBoundTicks(
+            EmergencyProblemV2 problem,
+            int activeRobotCount)
+        {
+            if (problem == null || problem.VehicleCount == 0) return 0;
+            int robots = Math.Max(1, activeRobotCount);
+            int service =
+                problem.Timing.LiftServiceTicks + problem.Timing.DropServiceTicks;
+            VehiclePose[] staging = problem.Slots
+                .Where(slot => slot.Kind == SlotKind.Staging)
+                .Select(slot => slot.Pose)
+                .ToArray();
+            var possibleMissionStarts = problem.RobotStarts
+                .Concat(staging.Select(pose => (pose.X, pose.Y)))
+                .Concat(staging.Select(pose => pose.SecondCell))
+                .ToArray();
+            int workload = 0;
+            int longestMission = 0;
+            foreach (int sourceSlot in problem.InitialVehicleSlots)
+            {
+                VehiclePose source = problem.Slots[sourceSlot].Pose;
+                int emptyDistance = possibleMissionStarts
+                    .Select(cell => Math.Min(
+                        Manhattan(cell, (source.X, source.Y)),
+                        Manhattan(cell, source.SecondCell)))
+                    .DefaultIfEmpty(0)
+                    .Min();
+                int carryDistance = staging
+                    .Select(destination => Manhattan(
+                        (source.X, source.Y),
+                        (destination.X, destination.Y)))
+                    .DefaultIfEmpty(0)
+                    .Min();
+                int mission = emptyDistance + carryDistance + service;
+                workload += mission;
+                if (mission > longestMission) longestMission = mission;
+            }
+            return Math.Max(
+                longestMission,
+                (workload + robots - 1) / robots);
+        }
+
+        private static int Manhattan(
+            (int X, int Y) left,
+            (int X, int Y) right)
+        {
+            return Math.Abs(left.X - right.X) + Math.Abs(left.Y - right.Y);
         }
     }
 }

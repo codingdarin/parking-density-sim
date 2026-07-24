@@ -106,6 +106,9 @@ namespace ParkingSim
                 case "v2complex":
                     Scenarios.V2ApartmentComplexDemo.Run();
                     break;
+                case "v2complexdensity":
+                    Scenarios.V2ApartmentComplexDensitySweepDemo.Run();
+                    break;
                 case "v2tradeoff":
                     Scenarios.V2TradeoffDemo.Run();
                     break;
@@ -146,7 +149,7 @@ namespace ParkingSim
                     break;
                 }
                 default:
-                    Console.WriteLine("사용법: [layout|carry|multi|test|sanity|v2test|v2accessgate|v2scale|v2rolling|v2quality|v2pipeline|v2pdetail|v2pblock|v2papartment|v2pconstrained|v2pseeds|v2robots|v2arobots|v2corridor|v2caps|v2grid|v2crossing|v2orobots|v2pockets|v2pocketlayouts|v2finegrid|v2report|v2final|v2density|v2complex|v2tradeoff|baseline|emergency|batch|d9|normal] [숫자] [--all]");
+                    Console.WriteLine("사용법: [layout|carry|multi|test|sanity|v2test|v2accessgate|v2scale|v2rolling|v2quality|v2pipeline|v2pdetail|v2pblock|v2papartment|v2pconstrained|v2pseeds|v2robots|v2arobots|v2corridor|v2caps|v2grid|v2crossing|v2orobots|v2pockets|v2pocketlayouts|v2finegrid|v2report|v2final|v2density|v2complex|v2complexdensity|v2tradeoff|baseline|emergency|batch|d9|normal] [숫자] [--all]");
                     break;
             }
         }

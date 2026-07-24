@@ -35,13 +35,19 @@ namespace ParkingSim.Scenarios
                 MaxCenterlineAttempts = 16,
                 MaxSearchExpansions = 100000,
             };
+            var session = new ApartmentComplexPlanningSessionV2(
+                scenario,
+                activeRobotCount: 4,
+                generationOptions: options,
+                maxTick: 5000,
+                enableLowerBoundPruning: true);
             var rows = new List<Row>();
             foreach (ApartmentBuildingV2 building in scenario.Buildings)
             {
                 rows.Add(Evaluate(
-                    scenario, building.Id, false, "서문 단일", profile, options));
+                    session, building.Id, false, "서문 단일", profile));
                 rows.Add(Evaluate(
-                    scenario, building.Id, true, "서문+동문", profile, options));
+                    session, building.Id, true, "서문+동문", profile));
             }
 
             Console.WriteLine("=== 2행×4동 아파트 단지 화재 접근 전수 평가 ===");
@@ -74,25 +80,26 @@ namespace ParkingSim.Scenarios
                           $"{worst.Seconds:0.0}초/{worst.MovedVehicles}대, " +
                           $"7분 {(worst.WithinSevenMinutes ? "통과" : "실패")}");
             }
+            Console.WriteLine(
+                $"후보 생성 {session.RouteGenerationCount}회, " +
+                $"물리 시도 {session.PhysicalAttemptCount}회, " +
+                $"물리 캐시 적중 {session.AttemptCacheHitCount}회, " +
+                $"후보 물리계획 {session.PhysicalPlanCount}회, " +
+                $"하한 가지치기 {session.PhysicalPlanPrunedCount}회");
             WriteCsv(rows);
         }
 
         private static Row Evaluate(
-            ApartmentComplexScenarioV2 scenario,
+            ApartmentComplexPlanningSessionV2 session,
             int buildingId,
             bool includeSecondary,
             string mode,
-            PhysicalTimeProfileV2 profile,
-            EmergencyAccessRouteGenerationOptionsV2 options)
+            PhysicalTimeProfileV2 profile)
         {
             ApartmentComplexPlanResultV2 result =
-                ApartmentComplexEmergencyPlannerV2.Solve(
-                    scenario,
+                session.Solve(
                     new ApartmentFireIncidentV2(buildingId),
-                    includeSecondary,
-                    activeRobotCount: 4,
-                    generationOptions: options,
-                    maxTick: 5000);
+                    includeSecondary);
             var row = new Row
             {
                 BuildingId = buildingId,

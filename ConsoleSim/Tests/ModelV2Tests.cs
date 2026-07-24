@@ -7,7 +7,7 @@ namespace ParkingSim.Tests
 {
     public static class ModelV2Tests
     {
-        public const int ExpectedGateCount = 59;
+        public const int ExpectedGateCount = 62;
 
         public static int RunAll()
         {
@@ -71,6 +71,9 @@ namespace ParkingSim.Tests
             passed += Run("57 8동 단지 화재 — 동별 전용구역 자동 개통", TestApartmentComplexAllBuildings);
             passed += Run("58 8동 단지 복수입구 — 최악시간 비악화·재현", TestApartmentComplexMultipleEntrances);
             passed += Run("59 8동 단지 실패 — 미등록 화재동 명시적 거부", TestApartmentComplexInvalidIncident);
+            passed += Run("60 8동 밀도 팩토리 — 차량0~22·기하 보존", TestApartmentComplexDensityFactory);
+            passed += Run("61 8동 후보 캐시 — 밀도 간 중심선 재사용", TestApartmentComplexRouteCatalogReuse);
+            passed += Run("62 8동 하한 가지치기 — 선택 결과 동일", TestApartmentComplexPruningEquivalence);
             Console.WriteLine(
                 $"\nV2 타당성 게이트 {passed}/{ExpectedGateCount} 통과");
             return passed;
@@ -1429,6 +1432,123 @@ namespace ParkingSim.Tests
                    result.FailReason != null &&
                    result.FailReason.Contains("전용구역"),
                 "미등록 화재동을 명시적 입력 실패로 반환하지 않음");
+        }
+
+        private static void TestApartmentComplexDensityFactory()
+        {
+            ApartmentComplexScenarioV2 empty =
+                ApartmentComplexScenarioFactoryV2.BuildDensity(0);
+            ApartmentComplexScenarioV2 full =
+                ApartmentComplexScenarioFactoryV2.BuildDensity(
+                    ApartmentComplexScenarioFactoryV2.MaximumBlockingVehicles);
+            Assert(empty.BaseProblem.VehicleCount == 0 &&
+                   full.BaseProblem.VehicleCount == 22 &&
+                   empty.BaseProblem.Slots.Count == full.BaseProblem.Slots.Count &&
+                   empty.Buildings.Count == full.Buildings.Count &&
+                   empty.Entrances.Count == full.Entrances.Count,
+                "밀도 단계가 차량 수 외 단지 메타데이터를 바꿈");
+            for (int x = 0; x < empty.BaseProblem.Width; x++)
+                for (int y = 0; y < empty.BaseProblem.Height; y++)
+                    Assert(
+                        empty.BaseProblem.IsFloor(x, y) ==
+                        full.BaseProblem.IsFloor(x, y),
+                        "밀도 단계가 단지 floor를 바꿈");
+            bool rejected = false;
+            try
+            {
+                ApartmentComplexScenarioFactoryV2.BuildDensity(23);
+            }
+            catch (ArgumentOutOfRangeException)
+            {
+                rejected = true;
+            }
+            Assert(rejected, "차량 밀도 상한 초과를 거부하지 않음");
+        }
+
+        private static void TestApartmentComplexRouteCatalogReuse()
+        {
+            EmergencyAccessRouteGenerationOptionsV2 options = ComplexOptions();
+            ApartmentComplexScenarioV2 empty =
+                ApartmentComplexScenarioFactoryV2.BuildDensity(0);
+            var catalog = new ApartmentComplexRouteCatalogV2(empty, options);
+            var emptySession = new ApartmentComplexPlanningSessionV2(
+                empty,
+                generationOptions: options,
+                maxTick: 800,
+                routeCatalog: catalog);
+            ApartmentComplexPlanResultV2 primaryResult = emptySession.Solve(
+                new ApartmentFireIncidentV2(104),
+                includeSecondaryEntrances: false);
+            ApartmentComplexPlanResultV2 emptyResult = emptySession.Solve(
+                new ApartmentFireIncidentV2(104),
+                includeSecondaryEntrances: true);
+            int generated = catalog.GenerationCount;
+
+            ApartmentComplexScenarioV2 full =
+                ApartmentComplexScenarioFactoryV2.BuildDensity(22);
+            var fullSession = new ApartmentComplexPlanningSessionV2(
+                full,
+                generationOptions: options,
+                maxTick: 800,
+                routeCatalog: catalog);
+            ApartmentComplexPlanResultV2 fullResult = fullSession.Solve(
+                new ApartmentFireIncidentV2(104),
+                includeSecondaryEntrances: true);
+            Assert(primaryResult.Success && emptyResult.Success && fullResult.Success,
+                primaryResult.FailReason ??
+                emptyResult.FailReason ??
+                fullResult.FailReason);
+            Assert(generated == 2 && catalog.GenerationCount == generated,
+                "동일 기하의 밀도 단계에서 입구 후보를 다시 생성함");
+            Assert(emptySession.PhysicalAttemptCount == 2 &&
+                   emptySession.AttemptCacheHitCount == 1,
+                "서문 단일 결과를 복수 진입구 평가에서 재사용하지 않음");
+        }
+
+        private static void TestApartmentComplexPruningEquivalence()
+        {
+            ApartmentComplexScenarioV2 scenario =
+                ApartmentComplexScenarioFactoryV2.Build();
+            EmergencyAccessRouteGenerationOptionsV2 options = ComplexOptions();
+            ApartmentComplexPlanResultV2 baseline =
+                ApartmentComplexEmergencyPlannerV2.Solve(
+                    scenario,
+                    new ApartmentFireIncidentV2(104),
+                    includeSecondaryEntrances: true,
+                    activeRobotCount: 4,
+                    generationOptions: options,
+                    maxTick: 800);
+            var session = new ApartmentComplexPlanningSessionV2(
+                scenario,
+                activeRobotCount: 4,
+                generationOptions: options,
+                maxTick: 800,
+                enableLowerBoundPruning: true);
+            ApartmentComplexPlanResultV2 optimized = session.Solve(
+                new ApartmentFireIncidentV2(104),
+                includeSecondaryEntrances: true);
+            Assert(baseline.Success && optimized.Success,
+                baseline.FailReason ?? optimized.FailReason);
+            EmergencyAccessCandidateResultV2 left =
+                baseline.Selected.AutomaticPlan.Plan.Selected;
+            EmergencyAccessCandidateResultV2 right =
+                optimized.Selected.AutomaticPlan.Plan.Selected;
+            Assert(
+                baseline.Selected.Entrance.Name ==
+                optimized.Selected.Entrance.Name &&
+                left.Route.Name == right.Route.Name &&
+                left.Scenario.SelectedVehicleCount ==
+                right.Scenario.SelectedVehicleCount &&
+                left.Plan.Ticks == right.Plan.Ticks,
+                "하한 가지치기가 선택 입구·경로·차량·시간을 바꿈");
+            Assert(optimized.Attempts
+                    .SelectMany(attempt =>
+                        attempt.AutomaticPlan.Plan.Candidates)
+                    .Where(candidate => candidate.Success)
+                    .All(candidate =>
+                        candidate.PhysicalLowerBoundTicks <=
+                        candidate.Plan.Ticks),
+                "물리시간 하한이 실제 성공 계획보다 큼");
         }
 
         private static EmergencyAccessRouteGenerationOptionsV2 ComplexOptions()

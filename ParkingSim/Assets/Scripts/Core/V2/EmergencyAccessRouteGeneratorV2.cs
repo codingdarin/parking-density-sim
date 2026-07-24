@@ -253,10 +253,36 @@ namespace ParkingSim.Core.V2
             EmergencyAccessRouteGenerationOptionsV2 generationOptions = null,
             int maxHighLevelCandidates = 8,
             int maxTick = 2000,
-            int maxExpansionsPerPath = 200000)
+            int maxExpansionsPerPath = 200000,
+            bool enableLowerBoundPruning = false)
         {
             EmergencyAccessRouteGenerationResultV2 generation = Generate(
                 problem, entranceCell, fireCell, generationOptions);
+            return SolveGenerated(
+                problem,
+                generation,
+                activeRobotCount,
+                maxHighLevelCandidates,
+                maxTick,
+                maxExpansionsPerPath,
+                enableLowerBoundPruning);
+        }
+
+        /// <summary>
+        /// 동일 기하에서 미리 생성한 폭3 후보를 차량 점유가 다른 문제에 재사용한다.
+        /// 후보 생성은 floor·고정 차량에만 의존하며 물리 계획은 현재 problem으로 다시 실행한다.
+        /// </summary>
+        public static AutomaticEmergencyAccessPlanResultV2 SolveGenerated(
+            EmergencyProblemV2 problem,
+            EmergencyAccessRouteGenerationResultV2 generation,
+            int activeRobotCount,
+            int maxHighLevelCandidates = 8,
+            int maxTick = 2000,
+            int maxExpansionsPerPath = 200000,
+            bool enableLowerBoundPruning = false)
+        {
+            if (problem == null) throw new ArgumentNullException(nameof(problem));
+            if (generation == null) throw new ArgumentNullException(nameof(generation));
             var result = new AutomaticEmergencyAccessPlanResultV2
             {
                 Generation = generation,
@@ -274,7 +300,8 @@ namespace ParkingSim.Core.V2
                 activeRobotCount,
                 maxHighLevelCandidates,
                 maxTick,
-                maxExpansionsPerPath);
+                maxExpansionsPerPath,
+                enableLowerBoundPruning);
             result.Plan = plan;
             if (plan.Success)
             {
