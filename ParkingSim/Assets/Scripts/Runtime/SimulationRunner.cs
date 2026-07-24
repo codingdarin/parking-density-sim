@@ -39,6 +39,8 @@ namespace ParkingSim.Runtime
         private GameObject[] _robotViews;
         private GameObject[] _robotServiceIndicators;
         private bool[] _robotUsesCustomView;
+        private Camera[] _transportCameras;
+        private int _selectedTransportCamera = -1;
         private SimulationVisualLayers _visualLayers;
         private readonly SimulationCameraController _cameraController =
             new SimulationCameraController();
@@ -57,6 +59,7 @@ namespace ParkingSim.Runtime
         private bool _paused;
         private float _displayTick;
         private float _time;
+        private static readonly Rect HudBounds = new Rect(12f, 12f, 620f, 292f);
 
         private void Start()
         {
@@ -161,15 +164,9 @@ namespace ParkingSim.Runtime
 
         private void Update()
         {
-            if (PresetKeyPressed(1)) LoadPreset(0);
-            if (PresetKeyPressed(2)) LoadPreset(1);
-            if (VisualModeTogglePressed())
-            {
-                _visualMode = _visualMode == SimulationVisualMode.Control
-                    ? SimulationVisualMode.ThreeDimensional
-                    : SimulationVisualMode.Control;
-                ApplyVisualMode();
-            }
+            int transportCamera;
+            if (TransportCameraKeyPressed(out transportCamera))
+                SelectTransportCamera(transportCamera);
             if (PauseTogglePressed()) _paused = !_paused;
             if (ReplayPressed())
             {
@@ -177,7 +174,8 @@ namespace ParkingSim.Runtime
                 ApplyTick(0f);
             }
             Vector2 pointerPosition;
-            if (PointerPressed(out pointerPosition))
+            if (PointerPressed(out pointerPosition) &&
+                !IsPointerOverHud(pointerPosition))
             {
                 int clickedBuildingId;
                 string failure;
@@ -205,19 +203,37 @@ namespace ParkingSim.Runtime
             AnimateFireMarker();
         }
 
-        private static bool PresetKeyPressed(int preset)
+        private static bool TransportCameraKeyPressed(out int cameraIndex)
         {
 #if ENABLE_INPUT_SYSTEM
             Keyboard keyboard = Keyboard.current;
-            if (keyboard == null) return false;
-            return preset == 1
-                ? keyboard.digit1Key.wasPressedThisFrame
-                : keyboard.digit2Key.wasPressedThisFrame;
+            if (keyboard != null)
+            {
+                if (keyboard.digit1Key.wasPressedThisFrame) cameraIndex = 0;
+                else if (keyboard.digit2Key.wasPressedThisFrame) cameraIndex = 1;
+                else if (keyboard.digit3Key.wasPressedThisFrame) cameraIndex = 2;
+                else if (keyboard.digit4Key.wasPressedThisFrame) cameraIndex = 3;
+                else
+                {
+                    cameraIndex = -1;
+                    return false;
+                }
+                return true;
+            }
 #elif ENABLE_LEGACY_INPUT_MANAGER
-            return Input.GetKeyDown(preset == 1 ? KeyCode.Alpha1 : KeyCode.Alpha2);
-#else
-            return false;
+            if (Input.GetKeyDown(KeyCode.Alpha1)) cameraIndex = 0;
+            else if (Input.GetKeyDown(KeyCode.Alpha2)) cameraIndex = 1;
+            else if (Input.GetKeyDown(KeyCode.Alpha3)) cameraIndex = 2;
+            else if (Input.GetKeyDown(KeyCode.Alpha4)) cameraIndex = 3;
+            else
+            {
+                cameraIndex = -1;
+                return false;
+            }
+            return true;
 #endif
+            cameraIndex = -1;
+            return false;
         }
 
         private static bool PointerPressed(out Vector2 position)
@@ -240,17 +256,12 @@ namespace ParkingSim.Runtime
             return false;
         }
 
-        private static bool VisualModeTogglePressed()
+        private static bool IsPointerOverHud(Vector2 screenPosition)
         {
-#if ENABLE_INPUT_SYSTEM
-            return Keyboard.current != null &&
-                   (Keyboard.current.tabKey.wasPressedThisFrame ||
-                    Keyboard.current.cKey.wasPressedThisFrame);
-#elif ENABLE_LEGACY_INPUT_MANAGER
-            return Input.GetKeyDown(KeyCode.Tab) || Input.GetKeyDown(KeyCode.C);
-#else
-            return false;
-#endif
+            Vector2 guiPosition = new Vector2(
+                screenPosition.x,
+                Screen.height - screenPosition.y);
+            return HudBounds.Contains(guiPosition);
         }
 
         private static bool PauseTogglePressed()
@@ -280,7 +291,7 @@ namespace ParkingSim.Runtime
             out int buildingId,
             out string failure)
         {
-            Camera camera = Camera.main;
+            Camera camera = ActiveViewCamera();
             if (camera == null) camera = Object.FindAnyObjectByType<Camera>();
             if (camera == null)
             {
@@ -314,6 +325,17 @@ namespace ParkingSim.Runtime
             buildingId = building.Id;
             failure = null;
             return true;
+        }
+
+        private Camera ActiveViewCamera()
+        {
+            if (_selectedTransportCamera >= 0 &&
+                _transportCameras != null &&
+                _selectedTransportCamera < _transportCameras.Length)
+                return _transportCameras[_selectedTransportCamera];
+            return _presentationCamera != null
+                ? _presentationCamera
+                : Camera.main;
         }
 
         private void ApplyTick(float timelineTick)
@@ -835,6 +857,7 @@ namespace ParkingSim.Runtime
             _robotViews = new GameObject[_plan.RobotTimelines.Length];
             _robotServiceIndicators = new GameObject[_plan.RobotTimelines.Length];
             _robotUsesCustomView = new bool[_plan.RobotTimelines.Length];
+            _transportCameras = new Camera[_plan.RobotTimelines.Length];
             for (int robot = 0; robot < _plan.RobotTimelines.Length; robot++)
             {
                 GameObject cube = SimulationVisualAssetFactory.TryCreate(
@@ -877,7 +900,31 @@ namespace ParkingSim.Runtime
                 if (collider != null) Destroy(collider);
                 indicator.SetActive(false);
                 _robotServiceIndicators[robot] = indicator;
+                _transportCameras[robot] =
+                    BuildTransportCamera(cube.transform, robot);
             }
+        }
+
+        private static Camera BuildTransportCamera(
+            Transform transport,
+            int robotIndex)
+        {
+            var cameraObject = new GameObject(
+                "TransportUnit-Camera-" + (robotIndex + 1));
+            cameraObject.transform.SetParent(transport, worldPositionStays: false);
+            cameraObject.transform.localPosition = new Vector3(-1.55f, 1.05f, 0f);
+            cameraObject.transform.localRotation = Quaternion.LookRotation(
+                new Vector3(1.95f, -0.78f, 0f),
+                Vector3.up);
+            Camera camera = cameraObject.AddComponent<Camera>();
+            camera.enabled = false;
+            camera.fieldOfView = 62f;
+            camera.nearClipPlane = 0.08f;
+            camera.farClipPlane = 120f;
+            camera.clearFlags = CameraClearFlags.SolidColor;
+            camera.backgroundColor = new Color(0.025f, 0.04f, 0.07f);
+            cameraObject.SetActive(false);
+            return camera;
         }
 
         private void SetupLighting()
@@ -898,17 +945,47 @@ namespace ParkingSim.Runtime
         private void ApplyVisualMode()
         {
             if (_visualLayers == null || _problem == null) return;
+            _selectedTransportCamera = -1;
             _visualLayers.SetMode(_visualMode);
             _presentationCamera = _cameraController.Apply(
                 _visualMode,
                 _problem.Width,
                 _problem.Height,
                 _presentationCamera);
+            _presentationCamera.enabled = true;
             Debug.Log(
                 "[Model V2] camera=" + _presentationCamera.name +
                 (_visualMode == SimulationVisualMode.Control
                     ? ", control"
                     : ", three-dimensional"));
+        }
+
+        private void SelectTransportCamera(int cameraIndex)
+        {
+            if (_transportCameras == null ||
+                cameraIndex < 0 ||
+                cameraIndex >= _transportCameras.Length)
+            {
+                _inputStatus =
+                    "운송유닛 " + (cameraIndex + 1) + " 카메라를 사용할 수 없음";
+                return;
+            }
+            _visualMode = SimulationVisualMode.ThreeDimensional;
+            if (_visualLayers != null) _visualLayers.SetMode(_visualMode);
+            if (_presentationCamera != null)
+                _presentationCamera.enabled = false;
+            for (int index = 0; index < _transportCameras.Length; index++)
+            {
+                Camera camera = _transportCameras[index];
+                if (camera == null) continue;
+                bool selected = index == cameraIndex;
+                camera.gameObject.SetActive(selected);
+                camera.enabled = selected;
+            }
+            _selectedTransportCamera = cameraIndex;
+            _inputStatus =
+                "운송유닛 " + (cameraIndex + 1) +
+                " 추적 카메라 · 관제/3D 버튼으로 전체 화면 복귀";
         }
 
         private void AnimateFireMarker()
@@ -1061,27 +1138,46 @@ namespace ParkingSim.Runtime
             if (_plan == null) return;
             double seconds = _timeProfile.PlanSeconds(_plan.Ticks);
             bool safe = seconds <= 420.0;
-            GUI.Box(new Rect(12f, 12f, 540f, 214f), string.Empty);
-            GUI.Label(new Rect(24f, 22f, 476f, 24f), "Model V2 — " + _scenarioName);
-            GUI.Label(new Rect(24f, 46f, 516f, 24f),
+            GUI.Box(HudBounds, string.Empty);
+            GUI.Label(new Rect(24f, 22f, 596f, 24f), "Model V2 — " + _scenarioName);
+            GUI.Label(new Rect(24f, 46f, 596f, 24f),
                 "경로 " + _routeName + " · 이동 " + _movedVehicleCount + "/" +
                 _additionalVehicleCount + "대 · 운송유닛 " +
                 _plan.RobotTimelines.Length + "조");
-            GUI.Label(new Rect(24f, 70f, 516f, 24f),
+            GUI.Label(new Rect(24f, 70f, 596f, 24f),
                 "확보 " + _plan.Ticks + "틱 / " + seconds.ToString("0.0") +
                 "초(Stanley 1m/s 참조) · 7분 " + (safe ? "통과" : "실패") +
                 " · 재생 t=" + _displayTick.ToString("0.0"));
-            GUI.Label(new Rect(24f, 94f, 516f, 24f), ServiceStatusText());
-            GUI.Label(new Rect(24f, 118f, 516f, 24f), _inputStatus);
-            GUI.Label(new Rect(24f, 142f, 516f, 24f),
+            GUI.Label(new Rect(24f, 94f, 596f, 24f), ServiceStatusText());
+            GUI.Label(new Rect(24f, 118f, 596f, 24f), _inputStatus);
+            GUI.Label(new Rect(24f, 142f, 596f, 24f),
                 "아파트동 클릭: 화재동·전용구역 자동 재계획  ·  청록: 선택");
-            GUI.Label(new Rect(24f, 166f, 516f, 24f),
-                "[1] 서문 단일 진입  [2] 서문+동문 물리시간 비교");
-            GUI.Label(new Rect(24f, 190f, 516f, 24f),
-                "[Tab/C] " +
-                (_visualMode == SimulationVisualMode.Control ? "3D모드" : "관제모드") +
-                "  [Space] " + (_paused ? "재생" : "일시정지") +
-                "  [R] 처음부터");
+            GUI.Label(new Rect(24f, 170f, 56f, 24f), "화면");
+            if (GUI.Button(new Rect(78f, 166f, 88f, 28f), "관제모드"))
+            {
+                _visualMode = SimulationVisualMode.Control;
+                ApplyVisualMode();
+            }
+            if (GUI.Button(new Rect(172f, 166f, 88f, 28f), "3D모드"))
+            {
+                _visualMode = SimulationVisualMode.ThreeDimensional;
+                ApplyVisualMode();
+            }
+            GUI.Label(new Rect(278f, 170f, 54f, 24f), "진입");
+            if (GUI.Button(new Rect(326f, 166f, 116f, 28f), "서문 단일"))
+                LoadPreset(0);
+            if (GUI.Button(new Rect(448f, 166f, 166f, 28f), "서문+동문 비교"))
+                LoadPreset(1);
+            string cameraLabel = _selectedTransportCamera >= 0
+                ? "현재 유닛 " + (_selectedTransportCamera + 1)
+                : _visualMode == SimulationVisualMode.Control
+                    ? "현재 관제모드"
+                    : "현재 3D모드";
+            GUI.Label(new Rect(24f, 204f, 596f, 24f),
+                "[1~4] 운송유닛 추적 카메라  ·  " + cameraLabel);
+            GUI.Label(new Rect(24f, 228f, 596f, 24f),
+                "[Space] " + (_paused ? "재생" : "일시정지") +
+                "  [R] 처음부터  ·  화면/진입 조건은 위 버튼으로 변경");
         }
 
         private string ServiceStatusText()
