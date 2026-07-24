@@ -35,13 +35,18 @@ namespace ParkingSim.Runtime
         private readonly Dictionary<int, PipelinedMissionV2> _missions =
             new Dictionary<int, PipelinedMissionV2>();
         private GameObject[] _robotViews;
+        private GameObject[] _robotServiceIndicators;
         private GameObject _visualRoot;
+        private GameObject _fireMarker;
+        private Camera _presentationCamera;
         private string _scenarioName;
         private string _routeName;
         private int _movedVehicleCount;
         private int _additionalVehicleCount;
         private (int X, int Y) _fireCell;
         private string _inputStatus;
+        private bool _topDownCamera;
+        private bool _paused;
         private float _displayTick;
         private float _time;
 
@@ -141,9 +146,11 @@ namespace ParkingSim.Runtime
             BuildGrid();
             BuildRouteOverlays();
             BuildFireMarker();
+            BuildEntranceMarker();
             BuildFixedCars();
             BuildMovableCars();
             BuildRobots();
+            SetupLighting();
             SetupCamera();
             ApplyTick(0f);
 
@@ -163,6 +170,17 @@ namespace ParkingSim.Runtime
         {
             if (PresetKeyPressed(1)) LoadPreset(0);
             if (PresetKeyPressed(2)) LoadPreset(1);
+            if (CameraTogglePressed())
+            {
+                _topDownCamera = !_topDownCamera;
+                SetupCamera();
+            }
+            if (PauseTogglePressed()) _paused = !_paused;
+            if (ReplayPressed())
+            {
+                _time = 0f;
+                ApplyTick(0f);
+            }
             Vector2 pointerPosition;
             if (PointerPressed(out pointerPosition))
             {
@@ -180,10 +198,11 @@ namespace ParkingSim.Runtime
                 }
             }
             if (_plan == null) return;
-            _time += Time.deltaTime;
+            if (!_paused) _time += Time.deltaTime;
             float cycle = _plan.Ticks + EndHoldTicks;
             float tick = (_time / SecondsPerTick) % cycle;
             ApplyTick(Mathf.Min(tick, _plan.Ticks));
+            AnimateFireMarker();
         }
 
         private static bool PresetKeyPressed(int preset)
@@ -219,6 +238,39 @@ namespace ParkingSim.Runtime
 #endif
             position = Vector2.zero;
             return false;
+        }
+
+        private static bool CameraTogglePressed()
+        {
+#if ENABLE_INPUT_SYSTEM
+            return Keyboard.current != null && Keyboard.current.cKey.wasPressedThisFrame;
+#elif ENABLE_LEGACY_INPUT_MANAGER
+            return Input.GetKeyDown(KeyCode.C);
+#else
+            return false;
+#endif
+        }
+
+        private static bool PauseTogglePressed()
+        {
+#if ENABLE_INPUT_SYSTEM
+            return Keyboard.current != null && Keyboard.current.spaceKey.wasPressedThisFrame;
+#elif ENABLE_LEGACY_INPUT_MANAGER
+            return Input.GetKeyDown(KeyCode.Space);
+#else
+            return false;
+#endif
+        }
+
+        private static bool ReplayPressed()
+        {
+#if ENABLE_INPUT_SYSTEM
+            return Keyboard.current != null && Keyboard.current.rKey.wasPressedThisFrame;
+#elif ENABLE_LEGACY_INPUT_MANAGER
+            return Input.GetKeyDown(KeyCode.R);
+#else
+            return false;
+#endif
         }
 
         private bool TryResolveClickedCell(
@@ -277,15 +329,18 @@ namespace ParkingSim.Runtime
                 VehicleVisualState a = VehicleAt(vehicle, aTick);
                 VehicleVisualState b = VehicleAt(vehicle, bTick);
                 GameObject view = _carViews[vehicle];
-                view.transform.position = Vector3.Lerp(
+                Vector3 position = Vector3.Lerp(
                     VehiclePosition(a.Pose, a.Carried),
                     VehiclePosition(b.Pose, b.Carried), fraction);
+                position.y += ServiceHeightOffset(vehicle, timelineTick);
+                view.transform.position = position;
                 view.transform.rotation = Quaternion.Lerp(
                     VehicleRotation(a.Pose), VehicleRotation(b.Pose), fraction);
                 SetColor(view, a.Carried || b.Carried
                     ? new Color(1f, 0.55f, 0.08f)
                     : MovableVehicleColor(vehicle));
             }
+            ApplyServiceIndicators(timelineTick);
         }
 
         private VehicleVisualState VehicleAt(int vehicle, int tick)
@@ -304,6 +359,65 @@ namespace ParkingSim.Runtime
             return new VehicleVisualState(_problem.Slots[mission.DestinationSlot].Pose, false);
         }
 
+        private float ServiceHeightOffset(int vehicle, float tick)
+        {
+            PipelinedMissionV2 mission = _missions[vehicle];
+            float pickupStart = mission.LiftTick - _problem.Timing.LiftServiceTicks;
+            if (tick >= pickupStart && tick < mission.LiftTick)
+            {
+                float progress = Mathf.InverseLerp(pickupStart, mission.LiftTick, tick);
+                return Mathf.SmoothStep(0f, 0.18f, progress);
+            }
+            float releaseStart = mission.DropTick - _problem.Timing.DropServiceTicks;
+            if (tick >= releaseStart && tick < mission.DropTick)
+            {
+                float progress = Mathf.InverseLerp(releaseStart, mission.DropTick, tick);
+                return Mathf.SmoothStep(0f, -0.18f, progress);
+            }
+            return 0f;
+        }
+
+        private void ApplyServiceIndicators(float tick)
+        {
+            if (_robotServiceIndicators == null) return;
+            for (int robot = 0; robot < _robotServiceIndicators.Length; robot++)
+            {
+                float progress;
+                int phase = ServicePhase(robot, tick, out progress);
+                GameObject indicator = _robotServiceIndicators[robot];
+                indicator.SetActive(phase != 0);
+                if (phase == 0) continue;
+                SetColor(indicator, phase == 1
+                    ? new Color(1f, 0.72f, 0.08f)
+                    : new Color(0.20f, 1f, 0.50f));
+                float pulse = 0.85f + 0.25f * Mathf.Sin(Time.unscaledTime * 8f);
+                indicator.transform.localScale = new Vector3(
+                    0.30f * pulse, 0.30f + 0.50f * progress, 0.30f * pulse);
+            }
+        }
+
+        private int ServicePhase(int robot, float tick, out float progress)
+        {
+            foreach (PipelinedMissionV2 mission in _missions.Values)
+            {
+                if (mission.RobotIndex != robot) continue;
+                float pickupStart = mission.LiftTick - _problem.Timing.LiftServiceTicks;
+                if (tick >= pickupStart && tick < mission.LiftTick)
+                {
+                    progress = Mathf.InverseLerp(pickupStart, mission.LiftTick, tick);
+                    return 1;
+                }
+                float releaseStart = mission.DropTick - _problem.Timing.DropServiceTicks;
+                if (tick >= releaseStart && tick < mission.DropTick)
+                {
+                    progress = Mathf.InverseLerp(releaseStart, mission.DropTick, tick);
+                    return 2;
+                }
+            }
+            progress = 0f;
+            return 0;
+        }
+
         private void BuildGrid()
         {
             for (int y = 0; y < _problem.Height; y++)
@@ -314,8 +428,12 @@ namespace ParkingSim.Runtime
                     Track(tile);
                     tile.name = "Cell-" + x + "-" + y;
                     bool floor = _problem.IsFloor(x, y);
-                    tile.transform.position = new Vector3(x, floor ? -0.08f : 0.04f, y);
-                    tile.transform.localScale = new Vector3(0.94f, floor ? 0.12f : 0.35f, 0.94f);
+                    float height = floor
+                        ? 0.12f
+                        : 0.90f + ((x * 7 + y * 3) % 4) * 0.16f;
+                    tile.transform.position = new Vector3(
+                        x, floor ? -0.08f : height / 2f - 0.08f, y);
+                    tile.transform.localScale = new Vector3(0.94f, height, 0.94f);
                     SetColor(tile, CellColor(x, y));
                 }
             }
@@ -370,9 +488,38 @@ namespace ParkingSim.Runtime
             Track(fire);
             fire.name = "Fire-Origin";
             fire.transform.position = new Vector3(
-                _problem.FireCell.Value.X, 0.05f, _problem.FireCell.Value.Y);
-            fire.transform.localScale = new Vector3(0.28f, 0.05f, 0.28f);
+                _problem.FireCell.Value.X, 0.16f, _problem.FireCell.Value.Y);
+            fire.transform.localScale = new Vector3(0.34f, 0.14f, 0.34f);
             SetColor(fire, new Color(1f, 0.08f, 0.02f));
+            GameObject flame = CreateChildPrimitive(
+                PrimitiveType.Sphere,
+                fire.transform,
+                "Fire-Flame",
+                new Vector3(0f, 1.45f, 0f),
+                new Vector3(0.62f, 1.8f, 0.62f),
+                new Color(1f, 0.45f, 0.02f));
+            Collider flameCollider = flame.GetComponent<Collider>();
+            if (flameCollider != null) Destroy(flameCollider);
+            _fireMarker = fire;
+        }
+
+        private void BuildEntranceMarker()
+        {
+            var gate = new GameObject("Emergency-Entrance");
+            Track(gate);
+            gate.transform.position = new Vector3(0.15f, 0f, 5f);
+            CreateChildPrimitive(
+                PrimitiveType.Cube, gate.transform, "Entrance-Left",
+                new Vector3(0f, 0.52f, -1f),
+                new Vector3(0.18f, 1.05f, 0.18f), Color.white);
+            CreateChildPrimitive(
+                PrimitiveType.Cube, gate.transform, "Entrance-Right",
+                new Vector3(0f, 0.52f, 1f),
+                new Vector3(0.18f, 1.05f, 0.18f), Color.white);
+            CreateChildPrimitive(
+                PrimitiveType.Cube, gate.transform, "Entrance-Header",
+                new Vector3(0f, 1.02f, 0f),
+                new Vector3(0.18f, 0.14f, 2.18f), new Color(0.12f, 0.82f, 1f));
         }
 
         private void BuildFixedCars()
@@ -404,12 +551,23 @@ namespace ParkingSim.Runtime
             car.transform.localScale = new Vector3(1.82f, 0.42f, 0.82f);
             car.transform.position = VehiclePosition(pose, false);
             car.transform.rotation = VehicleRotation(pose);
+            CreateChildPrimitive(
+                PrimitiveType.Cube, car.transform, name + "-Cabin",
+                new Vector3(0.02f, 0.72f, 0f),
+                new Vector3(0.48f, 0.70f, 0.74f),
+                new Color(0.12f, 0.22f, 0.30f));
+            CreateChildPrimitive(
+                PrimitiveType.Cube, car.transform, name + "-Front",
+                new Vector3(0.43f, 0.05f, 0f),
+                new Vector3(0.06f, 0.54f, 0.76f),
+                new Color(0.92f, 0.92f, 0.78f));
             return car;
         }
 
         private void BuildRobots()
         {
             _robotViews = new GameObject[_plan.RobotTimelines.Length];
+            _robotServiceIndicators = new GameObject[_plan.RobotTimelines.Length];
             for (int robot = 0; robot < _plan.RobotTimelines.Length; robot++)
             {
                 var cube = GameObject.CreatePrimitive(PrimitiveType.Cube);
@@ -418,14 +576,46 @@ namespace ParkingSim.Runtime
                 cube.transform.localScale = new Vector3(0.72f, 0.18f, 0.72f);
                 SetColor(cube, RobotColor(robot, false));
                 _robotViews[robot] = cube;
+                CreateChildPrimitive(
+                    PrimitiveType.Cube, cube.transform, "Platform-" + (robot + 1),
+                    new Vector3(0f, 0.72f, 0f),
+                    new Vector3(1.12f, 0.26f, 1.12f),
+                    new Color(0.10f, 0.12f, 0.15f));
+                GameObject indicator = CreateChildPrimitive(
+                    PrimitiveType.Sphere, cube.transform, "ServiceLight-" + (robot + 1),
+                    new Vector3(0f, 1.55f, 0f),
+                    new Vector3(0.30f, 0.55f, 0.30f),
+                    new Color(1f, 0.72f, 0.08f));
+                Collider collider = indicator.GetComponent<Collider>();
+                if (collider != null) Destroy(collider);
+                indicator.SetActive(false);
+                _robotServiceIndicators[robot] = indicator;
             }
+        }
+
+        private void SetupLighting()
+        {
+            Light[] lights = Object.FindObjectsByType<Light>();
+            for (int i = 0; i < lights.Length; i++) lights[i].gameObject.SetActive(false);
+            var lightObject = new GameObject("ModelV2-KeyLight");
+            Track(lightObject);
+            Light light = lightObject.AddComponent<Light>();
+            light.type = LightType.Directional;
+            light.color = new Color(1f, 0.94f, 0.84f);
+            light.intensity = 1.25f;
+            light.shadows = LightShadows.Soft;
+            light.transform.rotation = Quaternion.Euler(48f, -32f, 0f);
+            RenderSettings.ambientLight = new Color(0.28f, 0.32f, 0.40f);
         }
 
         private void SetupCamera()
         {
             Camera[] cameras = Object.FindObjectsByType<Camera>();
-            Camera camera = cameras.Length > 0 ? cameras[0] : null;
-            for (int i = 1; i < cameras.Length; i++) cameras[i].gameObject.SetActive(false);
+            Camera camera = _presentationCamera != null
+                ? _presentationCamera
+                : cameras.Length > 0 ? cameras[0] : null;
+            for (int i = 0; i < cameras.Length; i++)
+                if (cameras[i] != camera) cameras[i].gameObject.SetActive(false);
             if (camera == null)
             {
                 var cameraObject = new GameObject("ModelV2-Camera") { tag = "MainCamera" };
@@ -433,18 +623,44 @@ namespace ParkingSim.Runtime
                 cameraObject.AddComponent<AudioListener>();
             }
 
+            camera.gameObject.SetActive(true);
+            _presentationCamera = camera;
             float aspect = camera.aspect > 0.01f ? camera.aspect : 16f / 9f;
-            float size = Mathf.Max(_problem.Height / 2f, _problem.Width / (2f * aspect)) + 1f;
-            camera.orthographic = true;
+            float centerX = (_problem.Width - 1) / 2f;
+            float centerZ = (_problem.Height - 1) / 2f;
+            float size = Mathf.Max(
+                _problem.Height / 2f,
+                _problem.Width / (2f * aspect)) + 1f;
+            camera.orthographic = _topDownCamera;
             camera.orthographicSize = size;
+            camera.fieldOfView = 38f;
             camera.nearClipPlane = 0.1f;
             camera.farClipPlane = 100f;
             camera.clearFlags = CameraClearFlags.SolidColor;
-            camera.backgroundColor = new Color(0.06f, 0.07f, 0.09f);
-            camera.transform.position = new Vector3(
-                (_problem.Width - 1) / 2f, 35f, (_problem.Height - 1) / 2f);
-            camera.transform.rotation = Quaternion.Euler(90f, 0f, 0f);
-            Debug.Log("[Model V2] camera=" + camera.name + ", orthoSize=" + size.ToString("0.0"));
+            camera.backgroundColor = new Color(0.025f, 0.04f, 0.07f);
+            if (_topDownCamera)
+            {
+                camera.transform.position = new Vector3(centerX, 35f, centerZ);
+                camera.transform.rotation = Quaternion.Euler(90f, 0f, 0f);
+            }
+            else
+            {
+                camera.transform.position = new Vector3(centerX, 22f, centerZ - 22f);
+                camera.transform.LookAt(new Vector3(centerX, 0f, centerZ));
+            }
+            Debug.Log(
+                "[Model V2] camera=" + camera.name +
+                (_topDownCamera ? ", top-down" : ", isometric"));
+        }
+
+        private void AnimateFireMarker()
+        {
+            if (_fireMarker == null) return;
+            float pulse = 1f + 0.12f * Mathf.Sin(Time.unscaledTime * 5f);
+            _fireMarker.transform.localScale = new Vector3(
+                0.34f * pulse,
+                0.14f * (1f + 0.08f * Mathf.Sin(Time.unscaledTime * 7f)),
+                0.34f * pulse);
         }
 
         private Color CellColor(int x, int y)
@@ -516,6 +732,24 @@ namespace ParkingSim.Runtime
             if (material.HasProperty("_BaseColor")) material.SetColor("_BaseColor", color);
         }
 
+        private static GameObject CreateChildPrimitive(
+            PrimitiveType type,
+            Transform parent,
+            string name,
+            Vector3 localPosition,
+            Vector3 localScale,
+            Color color)
+        {
+            GameObject child = GameObject.CreatePrimitive(type);
+            child.name = name;
+            child.transform.SetParent(parent, worldPositionStays: false);
+            child.transform.localPosition = localPosition;
+            child.transform.localRotation = Quaternion.identity;
+            child.transform.localScale = localScale;
+            SetColor(child, color);
+            return child;
+        }
+
         private void Track(GameObject target)
         {
             target.transform.SetParent(_visualRoot.transform, worldPositionStays: true);
@@ -526,21 +760,56 @@ namespace ParkingSim.Runtime
             if (_plan == null) return;
             double seconds = _timeProfile.PlanSeconds(_plan.Ticks);
             bool safe = seconds <= 420.0;
-            GUI.Box(new Rect(12f, 12f, 500f, 166f), string.Empty);
+            GUI.Box(new Rect(12f, 12f, 540f, 214f), string.Empty);
             GUI.Label(new Rect(24f, 22f, 476f, 24f), "Model V2 — " + _scenarioName);
-            GUI.Label(new Rect(24f, 46f, 476f, 24f),
+            GUI.Label(new Rect(24f, 46f, 516f, 24f),
                 "경로 " + _routeName + " · 이동 " + _movedVehicleCount + "/" +
                 _additionalVehicleCount + "대 · 운송유닛 " +
                 _plan.RobotTimelines.Length + "조");
-            GUI.Label(new Rect(24f, 70f, 476f, 24f),
+            GUI.Label(new Rect(24f, 70f, 516f, 24f),
                 "확보 " + _plan.Ticks + "틱 / " + seconds.ToString("0.0") +
                 "초(Stanley 1m/s 참조) · 7분 " + (safe ? "통과" : "실패") +
                 " · 재생 t=" + _displayTick.ToString("0.0"));
-            GUI.Label(new Rect(24f, 94f, 476f, 24f), _inputStatus);
-            GUI.Label(new Rect(24f, 118f, 476f, 24f),
+            GUI.Label(new Rect(24f, 94f, 516f, 24f), ServiceStatusText());
+            GUI.Label(new Rect(24f, 118f, 516f, 24f), _inputStatus);
+            GUI.Label(new Rect(24f, 142f, 516f, 24f),
                 "바닥 클릭: 화재 위치·자동 재계획  ·  청록: 선택  ·  파랑: 다른 후보");
-            GUI.Label(new Rect(24f, 142f, 476f, 24f),
+            GUI.Label(new Rect(24f, 166f, 516f, 24f),
                 "[1] 기본 화재 전면 재배치  [2] 현재 화재 자동 핵심경로");
+            GUI.Label(new Rect(24f, 190f, 516f, 24f),
+                "[C] " + (_topDownCamera ? "등각 3D" : "탑다운") +
+                "  [Space] " + (_paused ? "재생" : "일시정지") +
+                "  [R] 처음부터");
+        }
+
+        private string ServiceStatusText()
+        {
+            int pickup = 0;
+            int release = 0;
+            float pickupProgress = 0f;
+            float releaseProgress = 0f;
+            for (int robot = 0; robot < _plan.RobotTimelines.Length; robot++)
+            {
+                float progress;
+                int phase = ServicePhase(robot, _displayTick, out progress);
+                if (phase == 1)
+                {
+                    pickup++;
+                    pickupProgress = Mathf.Max(pickupProgress, progress);
+                }
+                else if (phase == 2)
+                {
+                    release++;
+                    releaseProgress = Mathf.Max(releaseProgress, progress);
+                }
+            }
+            if (pickup > 0)
+                return "서비스: 차량 취득 " + pickup + "조 · " +
+                       (pickupProgress * 100f).ToString("0") + "% · 노랑 상태등";
+            if (release > 0)
+                return "서비스: 차량 해제 " + release + "조 · " +
+                       (releaseProgress * 100f).ToString("0") + "% · 초록 상태등";
+            return _paused ? "서비스: 재생 일시정지" : "서비스: 이동/대기";
         }
 
         private readonly struct VehicleVisualState
