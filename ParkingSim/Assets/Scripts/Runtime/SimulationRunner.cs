@@ -36,7 +36,9 @@ namespace ParkingSim.Runtime
             new Dictionary<int, PipelinedMissionV2>();
         private GameObject[] _robotViews;
         private GameObject[] _robotServiceIndicators;
-        private GameObject _visualRoot;
+        private SimulationVisualLayers _visualLayers;
+        private readonly SimulationCameraController _cameraController =
+            new SimulationCameraController();
         private GameObject _fireMarker;
         private Camera _presentationCamera;
         private string _scenarioName;
@@ -45,7 +47,8 @@ namespace ParkingSim.Runtime
         private int _additionalVehicleCount;
         private (int X, int Y) _fireCell;
         private string _inputStatus;
-        private bool _topDownCamera;
+        private SimulationVisualMode _visualMode =
+            SimulationVisualMode.ThreeDimensional;
         private bool _paused;
         private float _displayTick;
         private float _time;
@@ -126,8 +129,9 @@ namespace ParkingSim.Runtime
                 return;
             }
 
-            if (_visualRoot != null) Destroy(_visualRoot);
-            _visualRoot = new GameObject("ModelV2-VisualRoot");
+            if (_visualLayers != null && _visualLayers.Root != null)
+                Destroy(_visualLayers.Root);
+            _visualLayers = new SimulationVisualLayers();
             _carViews.Clear();
             _missions.Clear();
             _problem = built.Problem;
@@ -143,7 +147,8 @@ namespace ParkingSim.Runtime
             foreach (PipelinedMissionV2 mission in _plan.Missions)
                 _missions.Add(mission.VehicleIndex, mission);
 
-            BuildGrid();
+            BuildControlGrid();
+            BuildPresentationGround();
             BuildApartmentContext();
             BuildRouteOverlays();
             BuildFireMarker();
@@ -152,7 +157,7 @@ namespace ParkingSim.Runtime
             BuildMovableCars();
             BuildRobots();
             SetupLighting();
-            SetupCamera();
+            ApplyVisualMode();
             ApplyTick(0f);
 
             Debug.Log(
@@ -171,10 +176,12 @@ namespace ParkingSim.Runtime
         {
             if (PresetKeyPressed(1)) LoadPreset(0);
             if (PresetKeyPressed(2)) LoadPreset(1);
-            if (CameraTogglePressed())
+            if (VisualModeTogglePressed())
             {
-                _topDownCamera = !_topDownCamera;
-                SetupCamera();
+                _visualMode = _visualMode == SimulationVisualMode.Control
+                    ? SimulationVisualMode.ThreeDimensional
+                    : SimulationVisualMode.Control;
+                ApplyVisualMode();
             }
             if (PauseTogglePressed()) _paused = !_paused;
             if (ReplayPressed())
@@ -241,12 +248,14 @@ namespace ParkingSim.Runtime
             return false;
         }
 
-        private static bool CameraTogglePressed()
+        private static bool VisualModeTogglePressed()
         {
 #if ENABLE_INPUT_SYSTEM
-            return Keyboard.current != null && Keyboard.current.cKey.wasPressedThisFrame;
+            return Keyboard.current != null &&
+                   (Keyboard.current.tabKey.wasPressedThisFrame ||
+                    Keyboard.current.cKey.wasPressedThisFrame);
 #elif ENABLE_LEGACY_INPUT_MANAGER
-            return Input.GetKeyDown(KeyCode.C);
+            return Input.GetKeyDown(KeyCode.Tab) || Input.GetKeyDown(KeyCode.C);
 #else
             return false;
 #endif
@@ -419,15 +428,15 @@ namespace ParkingSim.Runtime
             return 0;
         }
 
-        private void BuildGrid()
+        private void BuildControlGrid()
         {
             for (int y = 0; y < _problem.Height; y++)
             {
                 for (int x = 0; x < _problem.Width; x++)
                 {
                     var tile = GameObject.CreatePrimitive(PrimitiveType.Cube);
-                    Track(tile);
-                    tile.name = "Cell-" + x + "-" + y;
+                    Track(tile, SimulationVisualLayer.Control);
+                    tile.name = "ControlCell-" + x + "-" + y;
                     bool floor = _problem.IsFloor(x, y);
                     float height = floor
                         ? 0.12f
@@ -436,6 +445,31 @@ namespace ParkingSim.Runtime
                         x, floor ? -0.08f : height / 2f - 0.08f, y);
                     tile.transform.localScale = new Vector3(0.94f, height, 0.94f);
                     SetColor(tile, CellColor(x, y));
+                }
+            }
+        }
+
+        private void BuildPresentationGround()
+        {
+            for (int y = 0; y < _problem.Height; y++)
+            {
+                for (int x = 0; x < _problem.Width; x++)
+                {
+                    var tile = GameObject.CreatePrimitive(PrimitiveType.Cube);
+                    Track(tile, SimulationVisualLayer.ThreeDimensional);
+                    tile.name = "PresentationCell-" + x + "-" + y;
+                    bool floor = _problem.IsFloor(x, y);
+                    float height = floor
+                        ? 0.10f
+                        : 0.62f + ((x * 7 + y * 3) % 3) * 0.10f;
+                    tile.transform.position = new Vector3(
+                        x, floor ? -0.09f : height / 2f - 0.09f, y);
+                    tile.transform.localScale = new Vector3(0.98f, height, 0.98f);
+                    SetColor(
+                        tile,
+                        floor
+                            ? new Color(0.22f, 0.24f, 0.25f)
+                            : new Color(0.35f, 0.38f, 0.40f));
                 }
             }
         }
@@ -458,7 +492,15 @@ namespace ParkingSim.Runtime
                 "SelectedRoute-" + _selectedRoute.Name,
                 new Color(0.08f, 0.88f, 0.92f),
                 0.12f,
-                0.72f);
+                0.72f,
+                SimulationVisualLayer.Control);
+            BuildRouteOverlay(
+                _selectedRoute,
+                "ThreeDimensionalSelectedRoute-" + _selectedRoute.Name,
+                new Color(0.08f, 0.88f, 0.92f),
+                0.11f,
+                0.46f,
+                SimulationVisualLayer.ThreeDimensional);
         }
 
         private void BuildApartmentContext()
@@ -499,8 +541,19 @@ namespace ParkingSim.Runtime
             Color bodyColor,
             Color accentColor)
         {
-            var building = new GameObject(name);
-            Track(building);
+            GameObject building = SimulationVisualAssetFactory.TryCreate(
+                SimulationVisualAssetFactory.ApartmentResourcePath,
+                name);
+            if (building != null)
+            {
+                Track(building, SimulationVisualLayer.ThreeDimensional);
+                building.transform.position = origin;
+                building.transform.localScale = new Vector3(width, height, depth);
+                DisableColliders(building);
+                return;
+            }
+            building = new GameObject(name);
+            Track(building, SimulationVisualLayer.ThreeDimensional);
             building.transform.position = origin;
             CreateVisualChild(
                 PrimitiveType.Cube,
@@ -588,13 +641,14 @@ namespace ParkingSim.Runtime
             string namePrefix,
             Color color,
             float y,
-            float scale)
+            float scale,
+            SimulationVisualLayer layer = SimulationVisualLayer.Control)
         {
             int index = 0;
             foreach (var cell in route.RequiredCells)
             {
                 var marker = GameObject.CreatePrimitive(PrimitiveType.Cube);
-                Track(marker);
+                Track(marker, layer);
                 marker.name = namePrefix + "-" + index++;
                 marker.transform.position = new Vector3(cell.X, y, cell.Y);
                 marker.transform.localScale = new Vector3(scale, 0.04f, scale);
@@ -608,7 +662,7 @@ namespace ParkingSim.Runtime
         {
             if (!_problem.FireCell.HasValue) return;
             var fire = GameObject.CreatePrimitive(PrimitiveType.Cylinder);
-            Track(fire);
+            Track(fire, SimulationVisualLayer.Shared);
             fire.name = "Fire-Origin";
             fire.transform.position = new Vector3(
                 _problem.FireCell.Value.X, 0.16f, _problem.FireCell.Value.Y);
@@ -629,7 +683,7 @@ namespace ParkingSim.Runtime
         private void BuildEntranceMarker()
         {
             var gate = new GameObject("Emergency-Entrance");
-            Track(gate);
+            Track(gate, SimulationVisualLayer.Shared);
             gate.transform.position = new Vector3(0.15f, 0f, 5f);
             CreateChildPrimitive(
                 PrimitiveType.Cube, gate.transform, "Entrance-Left",
@@ -668,12 +722,18 @@ namespace ParkingSim.Runtime
 
         private GameObject CreateCar(string name, VehiclePose pose)
         {
-            var car = GameObject.CreatePrimitive(PrimitiveType.Cube);
-            Track(car);
+            GameObject car = SimulationVisualAssetFactory.TryCreate(
+                SimulationVisualAssetFactory.CarResourcePath,
+                name);
+            bool primitiveFallback = car == null;
+            if (primitiveFallback)
+                car = GameObject.CreatePrimitive(PrimitiveType.Cube);
+            Track(car, SimulationVisualLayer.Shared);
             car.name = name;
             car.transform.localScale = new Vector3(1.82f, 0.42f, 0.82f);
             car.transform.position = VehiclePosition(pose, false);
             car.transform.rotation = VehicleRotation(pose);
+            if (!primitiveFallback) return car;
             CreateChildPrimitive(
                 PrimitiveType.Cube, car.transform, name + "-Cabin",
                 new Vector3(0.02f, 0.72f, 0f),
@@ -693,17 +753,26 @@ namespace ParkingSim.Runtime
             _robotServiceIndicators = new GameObject[_plan.RobotTimelines.Length];
             for (int robot = 0; robot < _plan.RobotTimelines.Length; robot++)
             {
-                var cube = GameObject.CreatePrimitive(PrimitiveType.Cube);
-                Track(cube);
+                GameObject cube = SimulationVisualAssetFactory.TryCreate(
+                    SimulationVisualAssetFactory.TransportUnitResourcePath,
+                    "TransportUnit-" + (robot + 1));
+                bool primitiveFallback = cube == null;
+                if (primitiveFallback)
+                    cube = GameObject.CreatePrimitive(PrimitiveType.Cube);
+                Track(cube, SimulationVisualLayer.Shared);
                 cube.name = "TransportUnit-" + (robot + 1);
                 cube.transform.localScale = new Vector3(0.72f, 0.18f, 0.72f);
-                SetColor(cube, RobotColor(robot, false));
+                if (primitiveFallback)
+                    SetColor(cube, RobotColor(robot, false));
                 _robotViews[robot] = cube;
-                CreateChildPrimitive(
-                    PrimitiveType.Cube, cube.transform, "Platform-" + (robot + 1),
-                    new Vector3(0f, 0.72f, 0f),
-                    new Vector3(1.12f, 0.26f, 1.12f),
-                    new Color(0.10f, 0.12f, 0.15f));
+                if (primitiveFallback)
+                {
+                    CreateChildPrimitive(
+                        PrimitiveType.Cube, cube.transform, "Platform-" + (robot + 1),
+                        new Vector3(0f, 0.72f, 0f),
+                        new Vector3(1.12f, 0.26f, 1.12f),
+                        new Color(0.10f, 0.12f, 0.15f));
+                }
                 GameObject indicator = CreateChildPrimitive(
                     PrimitiveType.Sphere, cube.transform, "ServiceLight-" + (robot + 1),
                     new Vector3(0f, 1.55f, 0f),
@@ -721,7 +790,7 @@ namespace ParkingSim.Runtime
             Light[] lights = Object.FindObjectsByType<Light>();
             for (int i = 0; i < lights.Length; i++) lights[i].gameObject.SetActive(false);
             var lightObject = new GameObject("ModelV2-KeyLight");
-            Track(lightObject);
+            Track(lightObject, SimulationVisualLayer.Shared);
             Light light = lightObject.AddComponent<Light>();
             light.type = LightType.Directional;
             light.color = new Color(1f, 0.94f, 0.84f);
@@ -731,49 +800,20 @@ namespace ParkingSim.Runtime
             RenderSettings.ambientLight = new Color(0.28f, 0.32f, 0.40f);
         }
 
-        private void SetupCamera()
+        private void ApplyVisualMode()
         {
-            Camera[] cameras = Object.FindObjectsByType<Camera>();
-            Camera camera = _presentationCamera != null
-                ? _presentationCamera
-                : cameras.Length > 0 ? cameras[0] : null;
-            for (int i = 0; i < cameras.Length; i++)
-                if (cameras[i] != camera) cameras[i].gameObject.SetActive(false);
-            if (camera == null)
-            {
-                var cameraObject = new GameObject("ModelV2-Camera") { tag = "MainCamera" };
-                camera = cameraObject.AddComponent<Camera>();
-                cameraObject.AddComponent<AudioListener>();
-            }
-
-            camera.gameObject.SetActive(true);
-            _presentationCamera = camera;
-            float aspect = camera.aspect > 0.01f ? camera.aspect : 16f / 9f;
-            float centerX = (_problem.Width - 1) / 2f;
-            float centerZ = (_problem.Height - 1) / 2f;
-            float size = Mathf.Max(
-                _problem.Height / 2f,
-                _problem.Width / (2f * aspect)) + 2.5f;
-            camera.orthographic = _topDownCamera;
-            camera.orthographicSize = size;
-            camera.fieldOfView = 38f;
-            camera.nearClipPlane = 0.1f;
-            camera.farClipPlane = 100f;
-            camera.clearFlags = CameraClearFlags.SolidColor;
-            camera.backgroundColor = new Color(0.025f, 0.04f, 0.07f);
-            if (_topDownCamera)
-            {
-                camera.transform.position = new Vector3(centerX, 35f, centerZ);
-                camera.transform.rotation = Quaternion.Euler(90f, 0f, 0f);
-            }
-            else
-            {
-                camera.transform.position = new Vector3(centerX, 22f, centerZ - 22f);
-                camera.transform.LookAt(new Vector3(centerX, 0f, centerZ));
-            }
+            if (_visualLayers == null || _problem == null) return;
+            _visualLayers.SetMode(_visualMode);
+            _presentationCamera = _cameraController.Apply(
+                _visualMode,
+                _problem.Width,
+                _problem.Height,
+                _presentationCamera);
             Debug.Log(
-                "[Model V2] camera=" + camera.name +
-                (_topDownCamera ? ", top-down" : ", isometric"));
+                "[Model V2] camera=" + _presentationCamera.name +
+                (_visualMode == SimulationVisualMode.Control
+                    ? ", control"
+                    : ", three-dimensional"));
         }
 
         private void AnimateFireMarker()
@@ -850,7 +890,9 @@ namespace ParkingSim.Runtime
 
         private static void SetColor(GameObject target, Color color)
         {
-            Material material = target.GetComponent<Renderer>().material;
+            Renderer renderer = target.GetComponent<Renderer>();
+            if (renderer == null) return;
+            Material material = renderer.material;
             material.color = color;
             if (material.HasProperty("_BaseColor")) material.SetColor("_BaseColor", color);
         }
@@ -892,9 +934,16 @@ namespace ParkingSim.Runtime
             return child;
         }
 
-        private void Track(GameObject target)
+        private static void DisableColliders(GameObject root)
         {
-            target.transform.SetParent(_visualRoot.transform, worldPositionStays: true);
+            Collider[] colliders = root.GetComponentsInChildren<Collider>(true);
+            for (int i = 0; i < colliders.Length; i++)
+                colliders[i].enabled = false;
+        }
+
+        private void Track(GameObject target, SimulationVisualLayer layer)
+        {
+            _visualLayers.Track(target, layer);
         }
 
         private void OnGUI()
@@ -919,7 +968,8 @@ namespace ParkingSim.Runtime
             GUI.Label(new Rect(24f, 166f, 516f, 24f),
                 "[1] 기본 화재 전면 재배치  [2] 현재 화재 자동 핵심경로");
             GUI.Label(new Rect(24f, 190f, 516f, 24f),
-                "[C] " + (_topDownCamera ? "등각 3D" : "탑다운") +
+                "[Tab/C] " +
+                (_visualMode == SimulationVisualMode.Control ? "3D모드" : "관제모드") +
                 "  [Space] " + (_paused ? "재생" : "일시정지") +
                 "  [R] 처음부터");
         }
