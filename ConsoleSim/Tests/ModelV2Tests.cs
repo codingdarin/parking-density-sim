@@ -1447,6 +1447,22 @@ namespace ParkingSim.Tests
                    empty.Buildings.Count == full.Buildings.Count &&
                    empty.Entrances.Count == full.Entrances.Count,
                 "밀도 단계가 차량 수 외 단지 메타데이터를 바꿈");
+            ParkingSlotV2[] blockingSlots = full.BaseProblem.Slots
+                .Where(slot => slot.Kind == SlotKind.Blocking)
+                .ToArray();
+            Assert(blockingSlots.Count(slot =>
+                       slot.Pose.Orientation ==
+                       VehicleOrientation.Vertical) == 6 &&
+                   blockingSlots.Where(slot =>
+                           slot.Pose.Orientation ==
+                           VehicleOrientation.Vertical)
+                       .All(slot =>
+                           new[] { 15, 28, 41 }.Contains(slot.Pose.X) &&
+                           (slot.Pose.Y == 10 || slot.Pose.Y == 27)) &&
+                   blockingSlots.Count(slot =>
+                       slot.Pose.Orientation ==
+                       VehicleOrientation.Horizontal) == 16,
+                "연결도로6면 세로·가로도로16면 가로 주차 구성이 아님");
             for (int x = 0; x < empty.BaseProblem.Width; x++)
                 for (int y = 0; y < empty.BaseProblem.Height; y++)
                     Assert(

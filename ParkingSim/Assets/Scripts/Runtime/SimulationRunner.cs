@@ -1235,7 +1235,7 @@ namespace ParkingSim.Runtime
                 PrimitiveType.Cube,
                 "ApartmentPodium-" + apartment.Id,
                 new Vector3(origin.x, 0f, origin.z),
-                new Vector3(width + 1.25f, 0.08f, depth + 1.25f),
+                new Vector3(width + 0.10f, 0.08f, depth + 0.10f),
                 _siteConcreteMaterial);
 
             bool northRow = apartment.Id <= 104;

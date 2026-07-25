@@ -182,9 +182,19 @@ namespace ParkingSim.Core.V2
             foreach (int x in new[] { 12, 25, 38, 51 })
                 AddSlot(slots, SlotKind.Blocking, x, 37);
             foreach (int x in new[] { 15, 28, 41 })
-                AddSlot(slots, SlotKind.Blocking, x, 10);
+                AddSlot(
+                    slots,
+                    SlotKind.Blocking,
+                    x,
+                    10,
+                    VehicleOrientation.Vertical);
             foreach (int x in new[] { 15, 28, 41 })
-                AddSlot(slots, SlotKind.Blocking, x, 27);
+                AddSlot(
+                    slots,
+                    SlotKind.Blocking,
+                    x,
+                    27,
+                    VehicleOrientation.Vertical);
             foreach (int x in Enumerable.Range(0, 12).Select(index => 6 + index * 3))
                 AddSlot(slots, SlotKind.Staging, x, 0);
 
@@ -240,12 +250,14 @@ namespace ParkingSim.Core.V2
             ICollection<ParkingSlotV2> slots,
             SlotKind kind,
             int x,
-            int y)
+            int y,
+            VehicleOrientation orientation =
+                VehicleOrientation.Horizontal)
         {
             slots.Add(new ParkingSlotV2(
                 slots.Count,
                 kind,
-                new VehiclePose(x, y, VehicleOrientation.Horizontal)));
+                new VehiclePose(x, y, orientation)));
         }
 
         private static void Fill(
