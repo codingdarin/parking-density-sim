@@ -27,6 +27,7 @@ namespace ParkingSim.Runtime
         private const float EndHoldTicks = 5f;
         private const float RoadSurfaceHeight = -0.02f;
         private const float ParkedVehicleRootHeight = 0.30f;
+        private const float CameraWheelZoomExponent = 1.35f;
         private const float CustomVehicleBottomOffset =
             RoadSurfaceHeight - ParkedVehicleRootHeight;
 
@@ -44,7 +45,8 @@ namespace ParkingSim.Runtime
             public Transform[] Decks;
             public Vector3[] DeckRestPositions;
             public Transform[] ArmPivots;
-            public float[] ArmDeploymentAngles;
+            public Quaternion[] ArmRestRotations;
+            public Quaternion[] ArmLiftRotations;
         }
 
         private EmergencyProblemV2 _problem;
@@ -652,15 +654,15 @@ namespace ParkingSim.Runtime
             {
                 liftVisual.Decks[index].localPosition =
                     liftVisual.DeckRestPositions[index] +
-                    Vector3.up * (0.10f * deckAmount);
+                    Vector3.up * (0.035f * deckAmount);
             }
             for (int index = 0; index < liftVisual.ArmPivots.Length; index++)
             {
                 liftVisual.ArmPivots[index].localRotation =
-                    Quaternion.Euler(
-                        0f,
-                        liftVisual.ArmDeploymentAngles[index] * armAmount,
-                        0f);
+                    Quaternion.Slerp(
+                        liftVisual.ArmRestRotations[index],
+                        liftVisual.ArmLiftRotations[index],
+                        armAmount);
             }
         }
 
@@ -1780,53 +1782,93 @@ namespace ParkingSim.Runtime
             int robot)
         {
             SetRendererEnabledByName(transport, "LiftPlate", false);
+            SetSubtreeRenderersEnabledByName(
+                transport,
+                "VisualOffset",
+                false);
             var assembly = new GameObject(
-                "SplitLiftAssembly-" + (robot + 1));
+                "PairedAxleModules-" + (robot + 1));
             assembly.transform.SetParent(transport, worldPositionStays: false);
             assembly.transform.localPosition = Vector3.zero;
             assembly.transform.localRotation = Quaternion.identity;
 
             var decks = new Transform[2];
             var deckRestPositions = new Vector3[2];
-            var armPivots = new Transform[4];
-            var armDeploymentAngles = new float[4];
+            var armPivots = new Transform[8];
+            var armRestRotations = new Quaternion[8];
+            var armLiftRotations = new Quaternion[8];
             int armIndex = 0;
-            for (int sideIndex = 0; sideIndex < 2; sideIndex++)
+            for (int moduleIndex = 0; moduleIndex < 2; moduleIndex++)
             {
-                float side = sideIndex == 0 ? -1f : 1f;
+                float moduleX = moduleIndex == 0 ? -0.52f : 0.52f;
+                string moduleName =
+                    moduleIndex == 0 ? "RearAxleModule" : "FrontAxleModule";
+                var module = new GameObject(moduleName);
+                module.transform.SetParent(
+                    assembly.transform,
+                    worldPositionStays: false);
+                module.transform.localPosition =
+                    new Vector3(moduleX, 0f, 0f);
+                module.transform.localRotation = Quaternion.identity;
+                CreateChildPrimitive(
+                    PrimitiveType.Cube,
+                    module.transform,
+                    moduleName + "-Body",
+                    new Vector3(0f, 0.02f, 0f),
+                    new Vector3(0.48f, 0.08f, 0.68f),
+                    new Color(0.10f, 0.12f, 0.15f));
                 GameObject deck = CreateChildPrimitive(
                     PrimitiveType.Cube,
-                    assembly.transform,
-                    "LiftDeck-" + (sideIndex + 1),
-                    new Vector3(0f, 0.015f, side * 0.30f),
-                    new Vector3(1.62f, 0.045f, 0.18f),
+                    module.transform,
+                    moduleName + "-LiftDeck",
+                    new Vector3(0f, 0.073f, 0f),
+                    new Vector3(0.44f, 0.026f, 0.62f),
                     new Color(0.20f, 0.23f, 0.27f));
-                decks[sideIndex] = deck.transform;
-                deckRestPositions[sideIndex] = deck.transform.localPosition;
+                decks[moduleIndex] = deck.transform;
+                deckRestPositions[moduleIndex] =
+                    deck.transform.localPosition;
+                float ledDirection = moduleIndex == 0 ? -1f : 1f;
+                CreateChildPrimitive(
+                    PrimitiveType.Cube,
+                    module.transform,
+                    moduleName + "-StatusStrip",
+                    new Vector3(ledDirection * 0.242f, 0.064f, 0f),
+                    new Vector3(0.025f, 0.024f, 0.22f),
+                    new Color(0.08f, 0.82f, 1f));
 
-                for (int axleIndex = 0; axleIndex < 2; axleIndex++)
+                for (int sideIndex = 0; sideIndex < 2; sideIndex++)
                 {
-                    float axle = axleIndex == 0 ? -0.52f : 0.52f;
-                    var pivot = new GameObject(
-                        "WheelPusherPivot-" +
-                        (sideIndex + 1) + "-" + (axleIndex + 1));
-                    pivot.transform.SetParent(
-                        deck.transform,
-                        worldPositionStays: false);
-                    pivot.transform.localPosition =
-                        new Vector3(axle, 0.045f, 0f);
-                    pivot.transform.localRotation = Quaternion.identity;
-                    CreateChildPrimitive(
-                        PrimitiveType.Cube,
-                        pivot.transform,
-                        "WheelPusherBar-" + (armIndex + 1),
-                        new Vector3(0.22f, 0f, 0f),
-                        new Vector3(0.44f, 0.052f, 0.058f),
-                        new Color(0.70f, 0.74f, 0.78f));
-                    armPivots[armIndex] = pivot.transform;
-                    armDeploymentAngles[armIndex] =
-                        side > 0f ? 90f : -90f;
-                    armIndex++;
+                    float side = sideIndex == 0 ? -1f : 1f;
+                    for (int pairIndex = 0; pairIndex < 2; pairIndex++)
+                    {
+                        float pivotX = pairIndex == 0 ? -0.09f : 0.09f;
+                        float restYaw = pairIndex == 0 ? 180f : 0f;
+                        float liftYaw = side > 0f ? -90f : 90f;
+                        var pivot = new GameObject(
+                            moduleName + "-WheelArmPivot-" +
+                            (sideIndex + 1) + "-" + (pairIndex + 1));
+                        pivot.transform.SetParent(
+                            deck.transform,
+                            worldPositionStays: false);
+                        pivot.transform.localPosition =
+                            new Vector3(pivotX, 0.035f, side * 0.23f);
+                        Quaternion restRotation =
+                            Quaternion.Euler(0f, restYaw, 0f);
+                        Quaternion liftRotation =
+                            Quaternion.Euler(0f, liftYaw, 0f);
+                        pivot.transform.localRotation = restRotation;
+                        CreateChildPrimitive(
+                            PrimitiveType.Cube,
+                            pivot.transform,
+                            moduleName + "-WheelArm-" + (armIndex + 1),
+                            new Vector3(0.14f, 0f, 0f),
+                            new Vector3(0.28f, 0.045f, 0.050f),
+                            new Color(0.70f, 0.74f, 0.78f));
+                        armPivots[armIndex] = pivot.transform;
+                        armRestRotations[armIndex] = restRotation;
+                        armLiftRotations[armIndex] = liftRotation;
+                        armIndex++;
+                    }
                 }
             }
             DisableColliders(assembly);
@@ -1835,7 +1877,8 @@ namespace ParkingSim.Runtime
                 Decks = decks,
                 DeckRestPositions = deckRestPositions,
                 ArmPivots = armPivots,
-                ArmDeploymentAngles = armDeploymentAngles,
+                ArmRestRotations = armRestRotations,
+                ArmLiftRotations = armLiftRotations,
             };
         }
 
@@ -1850,6 +1893,24 @@ namespace ParkingSim.Runtime
                 if (transforms[index].name != objectName) continue;
                 Renderer renderer = transforms[index].GetComponent<Renderer>();
                 if (renderer != null) renderer.enabled = enabled;
+            }
+        }
+
+        private static void SetSubtreeRenderersEnabledByName(
+            Transform root,
+            string objectName,
+            bool enabled)
+        {
+            Transform[] transforms = root.GetComponentsInChildren<Transform>(true);
+            for (int index = 0; index < transforms.Length; index++)
+            {
+                if (transforms[index].name != objectName) continue;
+                Renderer[] renderers =
+                    transforms[index].GetComponentsInChildren<Renderer>(true);
+                for (int rendererIndex = 0;
+                     rendererIndex < renderers.Length;
+                     rendererIndex++)
+                    renderers[rendererIndex].enabled = enabled;
             }
         }
 
@@ -1980,7 +2041,8 @@ namespace ParkingSim.Runtime
                     8f,
                     78f);
                 _transportCameraDistances[index] = Mathf.Clamp(
-                    distance * Mathf.Exp(-zoom * 0.85f),
+                    distance * Mathf.Exp(
+                        -zoom * CameraWheelZoomExponent),
                     0.85f,
                     8f);
                 ApplyTransportCameraPose(index);
@@ -2003,7 +2065,8 @@ namespace ParkingSim.Runtime
                 12f,
                 78f);
             _presentationCameraDistance = Mathf.Clamp(
-                _presentationCameraDistance * Mathf.Exp(-zoom * 0.85f),
+                _presentationCameraDistance * Mathf.Exp(
+                    -zoom * CameraWheelZoomExponent),
                 12f,
                 110f);
             ApplyPresentationCameraPose();
