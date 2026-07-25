@@ -480,12 +480,23 @@ namespace ParkingSim.Runtime
             {
                 TimedRobotStateV2 a = StateAt(_plan.RobotTimelines[robot], aTick);
                 TimedRobotStateV2 b = StateAt(_plan.RobotTimelines[robot], bTick);
-                _robotViews[robot].transform.position = Vector3.Lerp(
-                    RobotPosition(a, _robotUsesCustomView[robot]),
-                    RobotPosition(b, _robotUsesCustomView[robot]),
-                    fraction);
-                _robotViews[robot].transform.rotation = Quaternion.Lerp(
-                    RobotRotation(a), RobotRotation(b), fraction);
+                VehiclePose servicePose;
+                if (TryGetRobotServicePose(robot, timelineTick, out servicePose))
+                {
+                    _robotViews[robot].transform.position =
+                        RobotPosition(servicePose, _robotUsesCustomView[robot]);
+                    _robotViews[robot].transform.rotation =
+                        VehicleRotation(servicePose);
+                }
+                else
+                {
+                    _robotViews[robot].transform.position = Vector3.Lerp(
+                        RobotPosition(a, _robotUsesCustomView[robot]),
+                        RobotPosition(b, _robotUsesCustomView[robot]),
+                        fraction);
+                    _robotViews[robot].transform.rotation = Quaternion.Lerp(
+                        RobotRotation(a), RobotRotation(b), fraction);
+                }
                 SetColor(_robotViews[robot], RobotColor(robot, a.Carrying || b.Carrying));
             }
 
@@ -520,6 +531,34 @@ namespace ParkingSim.Runtime
                 }
             }
             ApplyServiceIndicators(timelineTick);
+        }
+
+        private bool TryGetRobotServicePose(
+            int robot,
+            float tick,
+            out VehiclePose pose)
+        {
+            foreach (PipelinedMissionV2 mission in _missions.Values)
+            {
+                if (mission.RobotIndex != robot) continue;
+                float pickupStart =
+                    mission.LiftTick - _problem.Timing.LiftServiceTicks;
+                if (tick >= pickupStart && tick < mission.LiftTick)
+                {
+                    pose = _problem.Slots[
+                        _problem.InitialVehicleSlots[mission.VehicleIndex]].Pose;
+                    return true;
+                }
+                float releaseStart =
+                    mission.DropTick - _problem.Timing.DropServiceTicks;
+                if (tick >= releaseStart && tick < mission.DropTick)
+                {
+                    pose = _problem.Slots[mission.DestinationSlot].Pose;
+                    return true;
+                }
+            }
+            pose = default(VehiclePose);
+            return false;
         }
 
         private VehicleVisualState VehicleAt(int vehicle, int tick)
@@ -1802,7 +1841,7 @@ namespace ParkingSim.Runtime
             int armIndex = 0;
             for (int moduleIndex = 0; moduleIndex < 2; moduleIndex++)
             {
-                float moduleX = moduleIndex == 0 ? -0.70f : 0.70f;
+                float moduleX = moduleIndex == 0 ? -0.62f : 0.62f;
                 string moduleName =
                     moduleIndex == 0 ? "RearAxleModule" : "FrontAxleModule";
                 var module = new GameObject(moduleName);
@@ -1817,14 +1856,14 @@ namespace ParkingSim.Runtime
                     module.transform,
                     moduleName + "-Body",
                     new Vector3(0f, 0.02f, 0f),
-                    new Vector3(0.34f, 0.065f, 0.54f),
+                    new Vector3(0.30f, 0.065f, 0.50f),
                     new Color(0.10f, 0.12f, 0.15f));
                 GameObject deck = CreateChildPrimitive(
                     PrimitiveType.Cube,
                     module.transform,
                     moduleName + "-LiftDeck",
                     new Vector3(0f, 0.061f, 0f),
-                    new Vector3(0.30f, 0.022f, 0.49f),
+                    new Vector3(0.27f, 0.022f, 0.45f),
                     new Color(0.20f, 0.23f, 0.27f));
                 decks[moduleIndex] = deck.transform;
                 deckRestPositions[moduleIndex] =
@@ -1841,19 +1880,21 @@ namespace ParkingSim.Runtime
                 for (int sideIndex = 0; sideIndex < 2; sideIndex++)
                 {
                     float side = sideIndex == 0 ? -1f : 1f;
+                    string sideName =
+                        sideIndex == 0 ? "LeftWheelGrip" : "RightWheelGrip";
                     for (int pairIndex = 0; pairIndex < 2; pairIndex++)
                     {
-                        float pivotX = pairIndex == 0 ? -0.055f : 0.055f;
+                        float pivotX = pairIndex == 0 ? -0.065f : 0.065f;
                         float restYaw = pairIndex == 0 ? 180f : 0f;
                         float liftYaw = side > 0f ? -90f : 90f;
                         var pivot = new GameObject(
-                            moduleName + "-WheelArmPivot-" +
-                            (sideIndex + 1) + "-" + (pairIndex + 1));
+                            moduleName + "-" + sideName + "-Hinge-" +
+                            (pairIndex == 0 ? "Rear" : "Front"));
                         pivot.transform.SetParent(
                             deck.transform,
                             worldPositionStays: false);
                         pivot.transform.localPosition =
-                            new Vector3(pivotX, 0.032f, side * 0.18f);
+                            new Vector3(pivotX, 0.032f, side * 0.17f);
                         Quaternion restRotation =
                             Quaternion.Euler(0f, restYaw, 0f);
                         Quaternion liftRotation =
@@ -1862,10 +1903,19 @@ namespace ParkingSim.Runtime
                         CreateChildPrimitive(
                             PrimitiveType.Cube,
                             pivot.transform,
-                            moduleName + "-WheelArm-" + (armIndex + 1),
-                            new Vector3(0.09f, 0f, 0f),
-                            new Vector3(0.18f, 0.036f, 0.040f),
+                            moduleName + "-" + sideName + "-Wiper-" +
+                            (pairIndex == 0 ? "Rear" : "Front"),
+                            new Vector3(0.11f, 0f, 0f),
+                            new Vector3(0.22f, 0.036f, 0.040f),
                             new Color(0.70f, 0.74f, 0.78f));
+                        CreateChildPrimitive(
+                            PrimitiveType.Cylinder,
+                            pivot.transform,
+                            moduleName + "-" + sideName + "-HingeCap-" +
+                            (pairIndex + 1),
+                            Vector3.zero,
+                            new Vector3(0.052f, 0.020f, 0.052f),
+                            new Color(0.18f, 0.21f, 0.24f));
                         armPivots[armIndex] = pivot.transform;
                         armRestRotations[armIndex] = restRotation;
                         armLiftRotations[armIndex] = liftRotation;
@@ -2219,6 +2269,16 @@ namespace ParkingSim.Runtime
             bool customTransport)
         {
             return new Vector3(robot.X, customTransport ? 0f : 0.20f, robot.Y);
+        }
+
+        private static Vector3 RobotPosition(
+            VehiclePose pose,
+            bool customTransport)
+        {
+            return new Vector3(
+                pose.X,
+                customTransport ? 0f : 0.20f,
+                pose.Y);
         }
 
         private static Quaternion RobotRotation(TimedRobotStateV2 robot)
