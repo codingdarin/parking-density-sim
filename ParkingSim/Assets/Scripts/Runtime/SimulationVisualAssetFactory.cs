@@ -67,38 +67,71 @@ namespace ParkingSim.Runtime
 
         public static Material TryCreateAsphaltMaterial()
         {
-            Material source = Resources.Load<Material>(AsphaltResourcePath);
-            if (source == null) return null;
-            Material instance = new Material(source);
-            PrepareMaterial(instance);
-            PrepareAsphaltMaterial(instance);
-            return instance;
+            Shader shader = Shader.Find("Universal Render Pipeline/Lit");
+            if (shader == null) shader = Shader.Find("Standard");
+            if (shader == null) return null;
+
+            var material = new Material(shader)
+            {
+                name = "Procedural-Asphalt"
+            };
+            Texture2D texture = CreateAsphaltTexture();
+            if (material.HasProperty("_BaseMap"))
+                material.SetTexture("_BaseMap", texture);
+            if (material.HasProperty("_MainTex"))
+                material.SetTexture("_MainTex", texture);
+            if (material.HasProperty("_BaseColor"))
+                material.SetColor("_BaseColor", Color.white);
+            material.color = Color.white;
+            if (material.HasProperty("_Metallic"))
+                material.SetFloat("_Metallic", 0f);
+            if (material.HasProperty("_Smoothness"))
+                material.SetFloat("_Smoothness", 0.10f);
+            if (material.HasProperty("_Glossiness"))
+                material.SetFloat("_Glossiness", 0.10f);
+            material.DisableKeyword("_NORMALMAP");
+            return material;
         }
 
-        private static void PrepareAsphaltMaterial(Material material)
+        private static Texture2D CreateAsphaltTexture()
         {
-            Texture baseMap = material.HasProperty("_BaseMap")
-                ? material.GetTexture("_BaseMap")
-                : null;
-            if (baseMap != null)
+            const int size = 64;
+            var texture = new Texture2D(
+                size,
+                size,
+                TextureFormat.RGB24,
+                mipChain: true)
             {
-                baseMap.filterMode = FilterMode.Trilinear;
-                baseMap.anisoLevel = 8;
-                baseMap.mipMapBias = 0.75f;
-            }
-            Texture normalMap = material.HasProperty("_BumpMap")
-                ? material.GetTexture("_BumpMap")
-                : null;
-            if (normalMap != null)
+                name = "Procedural-Asphalt-Texture",
+                wrapMode = TextureWrapMode.Repeat,
+                filterMode = FilterMode.Trilinear,
+                anisoLevel = 8,
+                mipMapBias = 0.35f
+            };
+            var pixels = new Color[size * size];
+            for (int y = 0; y < size; y++)
             {
-                normalMap.filterMode = FilterMode.Trilinear;
-                normalMap.anisoLevel = 8;
-                normalMap.mipMapBias = 0.75f;
+                for (int x = 0; x < size; x++)
+                {
+                    uint hash = (uint)(x * 73856093) ^
+                                (uint)(y * 19349663) ^
+                                0x9e3779b9u;
+                    hash ^= hash >> 13;
+                    hash *= 1274126177u;
+                    float fine = (hash & 1023u) / 1023f;
+                    float broad = Mathf.PerlinNoise(
+                        x * 0.115f,
+                        y * 0.115f);
+                    float value = 0.29f +
+                                  (broad - 0.5f) * 0.055f +
+                                  (fine - 0.5f) * 0.022f;
+                    pixels[y * size + x] =
+                        new Color(value, value * 1.01f, value * 1.02f);
+                }
             }
-            if (material.HasProperty("_BumpScale"))
-                material.SetFloat("_BumpScale", 0.22f);
-            if (material.HasProperty("_Smoothness"))
-                material.SetFloat("_Smoothness", 0.12f);
+            texture.SetPixels(pixels);
+            texture.Apply(updateMipmaps: true, makeNoLongerReadable: true);
+            return texture;
         }
 
         private static void PrepareMaterials(GameObject instance)
