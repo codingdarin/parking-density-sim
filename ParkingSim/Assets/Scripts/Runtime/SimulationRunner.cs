@@ -27,7 +27,7 @@ namespace ParkingSim.Runtime
         private const float EndHoldTicks = 5f;
         private const float RoadSurfaceHeight = -0.02f;
         private const float ParkedVehicleRootHeight = 0.30f;
-        private const float CameraWheelZoomExponent = 1.35f;
+        private const float CameraWheelZoomExponent = 2.0f;
         private const float CustomVehicleBottomOffset =
             RoadSurfaceHeight - ParkedVehicleRootHeight;
 
@@ -494,8 +494,12 @@ namespace ParkingSim.Runtime
                         RobotPosition(a, _robotUsesCustomView[robot]),
                         RobotPosition(b, _robotUsesCustomView[robot]),
                         fraction);
-                    _robotViews[robot].transform.rotation = Quaternion.Lerp(
-                        RobotRotation(a), RobotRotation(b), fraction);
+                    _robotViews[robot].transform.rotation =
+                        RobotVisualRotation(
+                            a,
+                            b,
+                            fraction,
+                            _robotViews[robot].transform.rotation);
                 }
                 SetColor(_robotViews[robot], RobotColor(robot, a.Carrying || b.Carrying));
             }
@@ -1808,7 +1812,7 @@ namespace ParkingSim.Runtime
                 _transportCameras[robot] =
                     BuildTransportCamera(cube.transform, robot);
                 _transportCameraFocusOffsets[robot] =
-                    new Vector3(0.42f, 0.12f, 0f);
+                    new Vector3(0f, 0.12f, 0f);
                 _transportCameraYaws[robot] = 90f;
                 _transportCameraPitches[robot] = 25f;
                 _transportCameraDistances[robot] = 2.2f;
@@ -1828,9 +1832,7 @@ namespace ParkingSim.Runtime
             var assembly = new GameObject(
                 "PairedAxleModules-" + (robot + 1));
             assembly.transform.SetParent(transport, worldPositionStays: false);
-            // A robot state stores the first cell of the 1x2 carried pose.
-            // The visible car is centred half a cell forward from that anchor.
-            assembly.transform.localPosition = new Vector3(0.5f, 0f, 0f);
+            assembly.transform.localPosition = Vector3.zero;
             assembly.transform.localRotation = Quaternion.identity;
 
             var decks = new Transform[2];
@@ -1841,7 +1843,7 @@ namespace ParkingSim.Runtime
             int armIndex = 0;
             for (int moduleIndex = 0; moduleIndex < 2; moduleIndex++)
             {
-                float moduleX = moduleIndex == 0 ? -0.62f : 0.62f;
+                float moduleX = moduleIndex == 0 ? -0.54f : 0.54f;
                 string moduleName =
                     moduleIndex == 0 ? "RearAxleModule" : "FrontAxleModule";
                 var module = new GameObject(moduleName);
@@ -2268,17 +2270,51 @@ namespace ParkingSim.Runtime
             TimedRobotStateV2 robot,
             bool customTransport)
         {
-            return new Vector3(robot.X, customTransport ? 0f : 0.20f, robot.Y);
+            float x = robot.X;
+            float z = robot.Y;
+            if (robot.Carrying)
+            {
+                VehiclePose pose = new VehiclePose(
+                    robot.X,
+                    robot.Y,
+                    robot.Orientation);
+                var second = pose.SecondCell;
+                x = (pose.X + second.X) * 0.5f;
+                z = (pose.Y + second.Y) * 0.5f;
+            }
+            return new Vector3(x, customTransport ? 0f : 0.20f, z);
         }
 
         private static Vector3 RobotPosition(
             VehiclePose pose,
             bool customTransport)
         {
+            var second = pose.SecondCell;
             return new Vector3(
-                pose.X,
+                (pose.X + second.X) * 0.5f,
                 customTransport ? 0f : 0.20f,
-                pose.Y);
+                (pose.Y + second.Y) * 0.5f);
+        }
+
+        private static Quaternion RobotVisualRotation(
+            TimedRobotStateV2 from,
+            TimedRobotStateV2 to,
+            float fraction,
+            Quaternion current)
+        {
+            if (from.Carrying || to.Carrying)
+                return Quaternion.Lerp(
+                    RobotRotation(from),
+                    RobotRotation(to),
+                    fraction);
+
+            int dx = to.X - from.X;
+            int dy = to.Y - from.Y;
+            if (dx != 0)
+                return Quaternion.identity;
+            if (dy != 0)
+                return Quaternion.Euler(0f, 90f, 0f);
+            return current;
         }
 
         private static Quaternion RobotRotation(TimedRobotStateV2 robot)
