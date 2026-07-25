@@ -71,7 +71,34 @@ namespace ParkingSim.Runtime
             if (source == null) return null;
             Material instance = new Material(source);
             PrepareMaterial(instance);
+            PrepareAsphaltMaterial(instance);
             return instance;
+        }
+
+        private static void PrepareAsphaltMaterial(Material material)
+        {
+            Texture baseMap = material.HasProperty("_BaseMap")
+                ? material.GetTexture("_BaseMap")
+                : null;
+            if (baseMap != null)
+            {
+                baseMap.filterMode = FilterMode.Trilinear;
+                baseMap.anisoLevel = 8;
+                baseMap.mipMapBias = 0.75f;
+            }
+            Texture normalMap = material.HasProperty("_BumpMap")
+                ? material.GetTexture("_BumpMap")
+                : null;
+            if (normalMap != null)
+            {
+                normalMap.filterMode = FilterMode.Trilinear;
+                normalMap.anisoLevel = 8;
+                normalMap.mipMapBias = 0.75f;
+            }
+            if (material.HasProperty("_BumpScale"))
+                material.SetFloat("_BumpScale", 0.22f);
+            if (material.HasProperty("_Smoothness"))
+                material.SetFloat("_Smoothness", 0.12f);
         }
 
         private static void PrepareMaterials(GameObject instance)

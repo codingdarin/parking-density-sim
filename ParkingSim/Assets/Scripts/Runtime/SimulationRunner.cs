@@ -741,7 +741,7 @@ namespace ParkingSim.Runtime
                 roadCells,
                 RoadSurfaceHeight,
                 _siteAsphaltMaterial,
-                0.16f);
+                0.08f);
             BuildSiteBoundary();
             BuildParkingSpaceMarkings();
             BuildRoadLaneMarkings();
@@ -1789,7 +1789,9 @@ namespace ParkingSim.Runtime
             var assembly = new GameObject(
                 "PairedAxleModules-" + (robot + 1));
             assembly.transform.SetParent(transport, worldPositionStays: false);
-            assembly.transform.localPosition = Vector3.zero;
+            // A robot state stores the first cell of the 1x2 carried pose.
+            // The visible car is centred half a cell forward from that anchor.
+            assembly.transform.localPosition = new Vector3(0.5f, 0f, 0f);
             assembly.transform.localRotation = Quaternion.identity;
 
             var decks = new Transform[2];
@@ -1800,7 +1802,7 @@ namespace ParkingSim.Runtime
             int armIndex = 0;
             for (int moduleIndex = 0; moduleIndex < 2; moduleIndex++)
             {
-                float moduleX = moduleIndex == 0 ? -0.52f : 0.52f;
+                float moduleX = moduleIndex == 0 ? -0.70f : 0.70f;
                 string moduleName =
                     moduleIndex == 0 ? "RearAxleModule" : "FrontAxleModule";
                 var module = new GameObject(moduleName);
@@ -1815,14 +1817,14 @@ namespace ParkingSim.Runtime
                     module.transform,
                     moduleName + "-Body",
                     new Vector3(0f, 0.02f, 0f),
-                    new Vector3(0.48f, 0.08f, 0.68f),
+                    new Vector3(0.34f, 0.065f, 0.54f),
                     new Color(0.10f, 0.12f, 0.15f));
                 GameObject deck = CreateChildPrimitive(
                     PrimitiveType.Cube,
                     module.transform,
                     moduleName + "-LiftDeck",
-                    new Vector3(0f, 0.073f, 0f),
-                    new Vector3(0.44f, 0.026f, 0.62f),
+                    new Vector3(0f, 0.061f, 0f),
+                    new Vector3(0.30f, 0.022f, 0.49f),
                     new Color(0.20f, 0.23f, 0.27f));
                 decks[moduleIndex] = deck.transform;
                 deckRestPositions[moduleIndex] =
@@ -1832,8 +1834,8 @@ namespace ParkingSim.Runtime
                     PrimitiveType.Cube,
                     module.transform,
                     moduleName + "-StatusStrip",
-                    new Vector3(ledDirection * 0.242f, 0.064f, 0f),
-                    new Vector3(0.025f, 0.024f, 0.22f),
+                    new Vector3(ledDirection * 0.176f, 0.052f, 0f),
+                    new Vector3(0.018f, 0.020f, 0.18f),
                     new Color(0.08f, 0.82f, 1f));
 
                 for (int sideIndex = 0; sideIndex < 2; sideIndex++)
@@ -1841,7 +1843,7 @@ namespace ParkingSim.Runtime
                     float side = sideIndex == 0 ? -1f : 1f;
                     for (int pairIndex = 0; pairIndex < 2; pairIndex++)
                     {
-                        float pivotX = pairIndex == 0 ? -0.09f : 0.09f;
+                        float pivotX = pairIndex == 0 ? -0.055f : 0.055f;
                         float restYaw = pairIndex == 0 ? 180f : 0f;
                         float liftYaw = side > 0f ? -90f : 90f;
                         var pivot = new GameObject(
@@ -1851,7 +1853,7 @@ namespace ParkingSim.Runtime
                             deck.transform,
                             worldPositionStays: false);
                         pivot.transform.localPosition =
-                            new Vector3(pivotX, 0.035f, side * 0.23f);
+                            new Vector3(pivotX, 0.032f, side * 0.18f);
                         Quaternion restRotation =
                             Quaternion.Euler(0f, restYaw, 0f);
                         Quaternion liftRotation =
@@ -1861,8 +1863,8 @@ namespace ParkingSim.Runtime
                             PrimitiveType.Cube,
                             pivot.transform,
                             moduleName + "-WheelArm-" + (armIndex + 1),
-                            new Vector3(0.14f, 0f, 0f),
-                            new Vector3(0.28f, 0.045f, 0.050f),
+                            new Vector3(0.09f, 0f, 0f),
+                            new Vector3(0.18f, 0.036f, 0.040f),
                             new Color(0.70f, 0.74f, 0.78f));
                         armPivots[armIndex] = pivot.transform;
                         armRestRotations[armIndex] = restRotation;
