@@ -486,7 +486,9 @@ namespace ParkingSim.Runtime
                     _robotViews[robot].transform.position =
                         RobotPosition(servicePose, _robotUsesCustomView[robot]);
                     _robotViews[robot].transform.rotation =
-                        VehicleRotation(servicePose);
+                        SmoothRobotRotation(
+                            _robotViews[robot].transform.rotation,
+                            VehicleRotation(servicePose));
                 }
                 else
                 {
@@ -495,11 +497,13 @@ namespace ParkingSim.Runtime
                         RobotPosition(b, _robotUsesCustomView[robot]),
                         fraction);
                     _robotViews[robot].transform.rotation =
-                        RobotVisualRotation(
-                            a,
-                            b,
-                            fraction,
-                            _robotViews[robot].transform.rotation);
+                        SmoothRobotRotation(
+                            _robotViews[robot].transform.rotation,
+                            RobotVisualTargetRotation(
+                                a,
+                                b,
+                                fraction,
+                                _robotViews[robot].transform.rotation));
                 }
                 SetColor(_robotViews[robot], RobotColor(robot, a.Carrying || b.Carrying));
             }
@@ -2301,7 +2305,7 @@ namespace ParkingSim.Runtime
                 (pose.Y + second.Y) * 0.5f);
         }
 
-        private static Quaternion RobotVisualRotation(
+        private static Quaternion RobotVisualTargetRotation(
             TimedRobotStateV2 from,
             TimedRobotStateV2 to,
             float fraction,
@@ -2320,6 +2324,16 @@ namespace ParkingSim.Runtime
             if (dy != 0)
                 return Quaternion.Euler(0f, 90f, 0f);
             return current;
+        }
+
+        private static Quaternion SmoothRobotRotation(
+            Quaternion current,
+            Quaternion target)
+        {
+            return Quaternion.RotateTowards(
+                current,
+                target,
+                300f * Time.unscaledDeltaTime);
         }
 
         private static Quaternion RobotRotation(TimedRobotStateV2 robot)
