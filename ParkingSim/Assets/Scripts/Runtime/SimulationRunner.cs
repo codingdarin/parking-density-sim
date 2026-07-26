@@ -2170,10 +2170,15 @@ namespace ParkingSim.Runtime
                 0f);
             Vector3 forward = orbit * Vector3.forward;
             Transform cameraTransform = _transportCameras[index].transform;
-            cameraTransform.localPosition =
-                _transportCameraFocusOffsets[index] -
-                forward * _transportCameraDistances[index];
-            cameraTransform.localRotation =
+            Transform transport = cameraTransform.parent;
+            Vector3 transportPosition = transport != null
+                ? transport.position
+                : Vector3.zero;
+            Vector3 worldFocus =
+                transportPosition + _transportCameraFocusOffsets[index];
+            cameraTransform.position =
+                worldFocus - forward * _transportCameraDistances[index];
+            cameraTransform.rotation =
                 Quaternion.LookRotation(forward, Vector3.up);
         }
 
