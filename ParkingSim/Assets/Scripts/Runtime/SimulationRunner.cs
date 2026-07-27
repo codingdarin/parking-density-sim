@@ -63,6 +63,8 @@ namespace ParkingSim.Runtime
         private readonly Dictionary<int, PipelinedMissionV2> _missions =
             new Dictionary<int, PipelinedMissionV2>();
         private GameObject[] _robotViews;
+        private GameObject[] _robotControlMarkers;
+        private TextMesh[] _robotControlLabels;
         private GameObject[] _robotServiceIndicators;
         private TransportLiftVisual[] _robotLiftVisuals;
         private bool[] _robotUsesCustomView;
@@ -538,7 +540,45 @@ namespace ParkingSim.Runtime
                             : new Color(1f, 0.48f, 0.04f));
                 }
             }
+            ApplyRobotControlMarkers(timelineTick);
             ApplyServiceIndicators(timelineTick);
+        }
+
+        private void ApplyRobotControlMarkers(float tick)
+        {
+            if (_robotControlMarkers == null) return;
+            int stateTick = Mathf.Clamp(
+                Mathf.FloorToInt(tick),
+                0,
+                _plan.Ticks);
+            for (int robot = 0;
+                 robot < _robotControlMarkers.Length;
+                 robot++)
+            {
+                GameObject marker = _robotControlMarkers[robot];
+                if (marker == null || _robotViews[robot] == null) continue;
+                Vector3 robotPosition = _robotViews[robot].transform.position;
+                marker.transform.position = new Vector3(
+                    robotPosition.x,
+                    0.30f,
+                    robotPosition.z);
+                marker.transform.rotation = Quaternion.identity;
+                float pulse =
+                    1f + 0.07f * Mathf.Sin(
+                        Time.unscaledTime * 3.2f + robot * 1.7f);
+                marker.transform.localScale =
+                    new Vector3(pulse, 1f, pulse);
+
+                bool carrying = StateAt(
+                    _plan.RobotTimelines[robot],
+                    stateTick).Carrying;
+                Color color = RobotColor(robot, carrying);
+                SetTrackingFrameColor(marker, color);
+                if (_robotControlLabels != null &&
+                    robot < _robotControlLabels.Length &&
+                    _robotControlLabels[robot] != null)
+                    _robotControlLabels[robot].color = color;
+            }
         }
 
         private bool TryGetRobotServicePose(
@@ -1759,6 +1799,10 @@ namespace ParkingSim.Runtime
         private void BuildRobots()
         {
             _robotViews = new GameObject[_plan.RobotTimelines.Length];
+            _robotControlMarkers =
+                new GameObject[_plan.RobotTimelines.Length];
+            _robotControlLabels =
+                new TextMesh[_plan.RobotTimelines.Length];
             _robotServiceIndicators = new GameObject[_plan.RobotTimelines.Length];
             _robotLiftVisuals =
                 new TransportLiftVisual[_plan.RobotTimelines.Length];
@@ -1789,6 +1833,8 @@ namespace ParkingSim.Runtime
                     cube.transform.localScale = Vector3.one;
                 }
                 _robotViews[robot] = cube;
+                _robotControlMarkers[robot] =
+                    BuildRobotControlMarker(robot);
                 _robotUsesCustomView[robot] = !primitiveFallback;
                 if (primitiveFallback)
                 {
@@ -1822,6 +1868,57 @@ namespace ParkingSim.Runtime
                 _transportCameraDistances[robot] = 2.2f;
                 ApplyTransportCameraPose(robot);
             }
+        }
+
+        private GameObject BuildRobotControlMarker(int robot)
+        {
+            var marker = new GameObject(
+                "Control-RobotHighlight-" + (robot + 1));
+            Track(marker, SimulationVisualLayer.Control);
+            LineRenderer line = marker.AddComponent<LineRenderer>();
+            line.useWorldSpace = false;
+            line.loop = true;
+            line.positionCount = 12;
+            line.startWidth = 0.085f;
+            line.endWidth = 0.085f;
+            line.numCornerVertices = 2;
+            line.material = CreateTrackingLineMaterial();
+            line.sortingOrder = 20;
+            const float radius = 0.72f;
+            for (int index = 0; index < line.positionCount; index++)
+            {
+                float angle =
+                    index * Mathf.PI * 2f / line.positionCount;
+                line.SetPosition(
+                    index,
+                    new Vector3(
+                        Mathf.Cos(angle) * radius,
+                        0f,
+                        Mathf.Sin(angle) * radius));
+            }
+
+            var labelObject = new GameObject(
+                "Control-RobotLabel-" + (robot + 1));
+            labelObject.transform.SetParent(
+                marker.transform,
+                worldPositionStays: false);
+            labelObject.transform.localPosition =
+                new Vector3(0f, 0.035f, 0f);
+            labelObject.transform.localRotation =
+                Quaternion.Euler(-90f, 0f, 0f);
+            TextMesh label = labelObject.AddComponent<TextMesh>();
+            label.text = "R" + (robot + 1);
+            label.anchor = TextAnchor.MiddleCenter;
+            label.alignment = TextAlignment.Center;
+            label.fontSize = 64;
+            label.characterSize = 0.16f;
+            label.fontStyle = FontStyle.Bold;
+            _robotControlLabels[robot] = label;
+            SetTrackingFrameColor(
+                marker,
+                RobotColor(robot, false));
+            label.color = RobotColor(robot, false);
+            return marker;
         }
 
         private TransportLiftVisual BuildTransportLiftVisual(
