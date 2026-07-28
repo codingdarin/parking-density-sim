@@ -62,6 +62,8 @@ namespace ParkingSim.Runtime
             new Dictionary<int, GameObject>();
         private readonly Dictionary<int, PipelinedMissionV2> _missions =
             new Dictionary<int, PipelinedMissionV2>();
+        private readonly List<TextMesh> _threeDimensionalLabels =
+            new List<TextMesh>();
         private GameObject[] _robotViews;
         private GameObject[] _robotControlMarkers;
         private TextMesh[] _robotControlLabels;
@@ -242,6 +244,7 @@ namespace ParkingSim.Runtime
             _carViews.Clear();
             _carTrackingFrames.Clear();
             _missions.Clear();
+            _threeDimensionalLabels.Clear();
             _problem = built.Problem;
             _plan = plan;
             _scenarioName =
@@ -324,6 +327,7 @@ namespace ParkingSim.Runtime
             ApplyTick(Mathf.Min(tick, _plan.Ticks));
             AnimateFireMarker();
             UpdateCameraNavigation();
+            ApplyThreeDimensionalLabelFacing();
         }
 
         private static bool TransportCameraKeyPressed(out int cameraIndex)
@@ -1398,6 +1402,7 @@ namespace ParkingSim.Runtime
             text.characterSize = 0.24f;
             text.fontSize = 48;
             text.color = new Color(0.92f, 0.94f, 0.98f);
+            _threeDimensionalLabels.Add(text);
         }
 
         private void BuildApartmentBuilding(
@@ -1490,6 +1495,7 @@ namespace ParkingSim.Runtime
             text.characterSize = Mathf.Max(0.18f, width * 0.035f);
             text.fontSize = 64;
             text.color = Color.white;
+            _threeDimensionalLabels.Add(text);
         }
 
         private void BuildRouteOverlay(
@@ -2234,6 +2240,23 @@ namespace ParkingSim.Runtime
             ApplyPresentationCameraPose();
         }
 
+        private void ApplyThreeDimensionalLabelFacing()
+        {
+            if (_visualMode != SimulationVisualMode.ThreeDimensional)
+                return;
+            Camera camera = ActiveViewCamera();
+            if (camera == null) return;
+            Quaternion screenFacingRotation = camera.transform.rotation;
+            for (int index = 0;
+                 index < _threeDimensionalLabels.Count;
+                 index++)
+            {
+                TextMesh label = _threeDimensionalLabels[index];
+                if (label != null)
+                    label.transform.rotation = screenFacingRotation;
+            }
+        }
+
         private void EnsurePresentationCameraNavigation()
         {
             if (_presentationCameraNavigationInitialized || _problem == null)
@@ -2504,6 +2527,16 @@ namespace ParkingSim.Runtime
             Renderer renderer = target.GetComponent<Renderer>();
             if (renderer == null) return;
             Material material = renderer.material;
+            Shader urpLit =
+                Shader.Find("Universal Render Pipeline/Lit");
+            if (urpLit != null && material.shader != urpLit)
+            {
+                material = new Material(urpLit)
+                {
+                    name = target.name + "-RuntimeLit"
+                };
+                renderer.material = material;
+            }
             material.color = color;
             if (material.HasProperty("_BaseColor")) material.SetColor("_BaseColor", color);
         }
