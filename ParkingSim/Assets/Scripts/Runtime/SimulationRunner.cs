@@ -577,7 +577,14 @@ namespace ParkingSim.Runtime
                 if (_robotControlLabels != null &&
                     robot < _robotControlLabels.Length &&
                     _robotControlLabels[robot] != null)
+                {
+                    _robotControlLabels[robot].transform.rotation =
+                        _presentationCamera != null &&
+                        _visualMode == SimulationVisualMode.Control
+                            ? _presentationCamera.transform.rotation
+                            : Quaternion.Euler(90f, 0f, 0f);
                     _robotControlLabels[robot].color = color;
+                }
             }
         }
 
@@ -1905,7 +1912,7 @@ namespace ParkingSim.Runtime
             labelObject.transform.localPosition =
                 new Vector3(0f, 0.035f, 0f);
             labelObject.transform.localRotation =
-                Quaternion.Euler(-90f, 0f, 0f);
+                Quaternion.Euler(90f, 0f, 0f);
             TextMesh label = labelObject.AddComponent<TextMesh>();
             label.text = "R" + (robot + 1);
             label.anchor = TextAnchor.MiddleCenter;
