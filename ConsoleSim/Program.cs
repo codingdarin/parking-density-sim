@@ -29,6 +29,89 @@ namespace ParkingSim
                 case "sanity":
                     Environment.ExitCode = Tests.AdversarialTests.RunSanityCheck() ? 0 : 1;
                     break;
+                case "v2test":
+                    Environment.ExitCode =
+                        Tests.ModelV2Tests.RunAll() ==
+                        Tests.ModelV2Tests.ExpectedGateCount ? 0 : 1;
+                    break;
+                case "v2accessgate":
+                    Environment.ExitCode = Tests.ModelV2Tests.RunEmergencyAccessGate() == 2 ? 0 : 1;
+                    break;
+                case "v2scale":
+                    Scenarios.V2ScaleDemo.Run(lanes > 1 ? lanes : 4);
+                    break;
+                case "v2rolling":
+                    Scenarios.V2ScaleDemo.RunRolling(lanes > 1 ? lanes : 5);
+                    break;
+                case "v2quality":
+                    Scenarios.V2ScaleDemo.RunQualityGate();
+                    break;
+                case "v2pipeline":
+                    Scenarios.V2ScaleDemo.RunPipelineQualityGate();
+                    break;
+                case "v2pdetail":
+                    Scenarios.V2ScaleDemo.RunPipelineDetail(lanes > 1 ? lanes : 2);
+                    break;
+                case "v2pblock":
+                    Scenarios.V2ScaleDemo.RunPipelineBlock();
+                    break;
+                case "v2papartment":
+                    Scenarios.V2ScaleDemo.RunPipelineApartment();
+                    break;
+                case "v2pconstrained":
+                    Scenarios.V2ScaleDemo.RunPipelineConstrainedApartment();
+                    break;
+                case "v2pseeds":
+                    Scenarios.V2SeedSweepDemo.Run(20);
+                    break;
+                case "v2robots":
+                    Scenarios.V2RobotSweepDemo.Run();
+                    break;
+                case "v2arobots":
+                    Scenarios.V2ApartmentRobotSweepDemo.Run();
+                    break;
+                case "v2corridor":
+                    Scenarios.V2CorridorSmokeDemo.Run();
+                    break;
+                case "v2caps":
+                    Scenarios.V2CandidateSensitivityDemo.Run();
+                    break;
+                case "v2grid":
+                    Scenarios.V2CorridorGridDemo.Run();
+                    break;
+                case "v2crossing":
+                    Scenarios.V2SafetyCrossingDemo.Run();
+                    break;
+                case "v2orobots":
+                    Scenarios.V2OperationalRobotSweepDemo.Run();
+                    break;
+                case "v2pockets":
+                    Scenarios.V2PocketSweepDemo.Run();
+                    break;
+                case "v2pocketlayouts":
+                    Scenarios.V2PocketLayoutSensitivityDemo.Run();
+                    break;
+                case "v2finegrid":
+                    Scenarios.V2FineGridDemo.Run();
+                    break;
+                case "v2report":
+                    Scenarios.V2ReportDemo.Run();
+                    break;
+                case "v2final":
+                    Scenarios.V2FinalComparisonDemo.Run();
+                    break;
+                case "v2density":
+                    Scenarios.V2SurfaceDensitySweepDemo.Run();
+                    break;
+                case "v2complex":
+                    Scenarios.V2ApartmentComplexDemo.Run();
+                    break;
+                case "v2complexdensity":
+                    Scenarios.V2ApartmentComplexDensitySweepDemo.Run();
+                    break;
+                case "v2tradeoff":
+                    Scenarios.V2TradeoffDemo.Run();
+                    break;
                 case "baseline":
                     Tests.AdversarialTests.RunNoCoordinationBaseline();
                     break;
@@ -66,7 +149,7 @@ namespace ParkingSim
                     break;
                 }
                 default:
-                    Console.WriteLine("사용법: [layout|carry|multi|test|sanity|baseline|emergency|batch|d9|normal] [점유 레인 0~3] [--all]");
+                    Console.WriteLine("사용법: [layout|carry|multi|test|sanity|v2test|v2accessgate|v2scale|v2rolling|v2quality|v2pipeline|v2pdetail|v2pblock|v2papartment|v2pconstrained|v2pseeds|v2robots|v2arobots|v2corridor|v2caps|v2grid|v2crossing|v2orobots|v2pockets|v2pocketlayouts|v2finegrid|v2report|v2final|v2density|v2complex|v2complexdensity|v2tradeoff|baseline|emergency|batch|d9|normal] [숫자] [--all]");
                     break;
             }
         }
