@@ -4,6 +4,7 @@ using System.Diagnostics;
 using System.Globalization;
 using System.IO;
 using System.Linq;
+using ParkingSim.Core;
 using ParkingSim.Core.V2;
 
 namespace ParkingSim.Scenarios
@@ -14,7 +15,7 @@ namespace ParkingSim.Scenarios
         {
             var csv = new List<string>
             {
-                "pockets,offset,success,ticks,seconds,safe_7min,expanded,elapsed_ms",
+                "pockets,offset,success,ticks,seconds,safe_7min,expanded",
             };
             Console.WriteLine("=== V2 포켓 위치 민감도 ===");
             Console.WriteLine("1레인·d100·활성4조·포켓10~16·순환오프셋20개");
@@ -38,7 +39,7 @@ namespace ParkingSim.Scenarios
                         maxHighLevelCandidates: 8);
                     stopwatch.Stop();
                     bool success = built.Success && result.Success && result.PhysicallyValid;
-                    bool safe = success && result.Ticks <= 168;
+                    bool safe = success && result.Ticks <= TimeBudget.BaselineTicks;
                     if (success)
                     {
                         successes++;
@@ -52,8 +53,7 @@ namespace ParkingSim.Scenarios
                         result.Ticks,
                         (result.Ticks * 2.5).ToString("F1", CultureInfo.InvariantCulture),
                         safe ? 1 : 0,
-                        result.ExpandedStates,
-                        stopwatch.ElapsedMilliseconds));
+                        result.ExpandedStates));
                 }
                 groupWatch.Stop();
                 ticks.Sort();
@@ -64,8 +64,7 @@ namespace ParkingSim.Scenarios
                     $"{pockets,7} | {successes,7}/20 | {safeCount,4}/20 | " +
                     $"{ticks.First(),4}/{median,5:F1}/{ticks.Last(),4} | {groupWatch.ElapsedMilliseconds,10:N0}");
             }
-            Directory.CreateDirectory("output");
-            string path = Path.Combine("output", "v2_pocket_layout_sensitivity.csv");
+            string path = OutputDir.Resolve("v2_pocket_layout_sensitivity.csv");
             File.WriteAllLines(path, csv);
             Console.WriteLine("CSV: " + Path.GetFullPath(path));
         }

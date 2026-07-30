@@ -4,6 +4,7 @@ using System.Globalization;
 using System.IO;
 using System.Linq;
 using System.Text;
+using ParkingSim.Core;
 using ParkingSim.Core.V2;
 
 namespace ParkingSim.Scenarios
@@ -86,7 +87,8 @@ namespace ParkingSim.Scenarios
             foreach (int lane in new[] { 1, 2, 3 })
             {
                 Measurement safe = measurements
-                    .Where(m => m.Lanes == lane && m.FireMeters < 100 && m.Ticks <= 168)
+                    .Where(m => m.Lanes == lane && m.FireMeters < 100 &&
+                                m.Ticks <= TimeBudget.BaselineTicks)
                     .OrderByDescending(m => m.FireMeters).First();
                 Measurement next = measurements
                     .Where(m => m.Lanes == lane && m.FireMeters < 100 && m.FireMeters > safe.FireMeters)
@@ -106,7 +108,7 @@ namespace ParkingSim.Scenarios
                 report.AppendLine(
                     $"| {measurement.Lanes} | {measurement.Vehicles}대 | " +
                     $"{measurement.Ticks}틱 / {measurement.Ticks * 2.5:F1}초 | " +
-                    $"{(measurement.Ticks <= 168 ? "통과" : "**실패**")} |");
+                    $"{(measurement.Ticks <= TimeBudget.BaselineTicks ? "통과" : "**실패**")} |");
             }
             report.AppendLine();
             report.AppendLine("## 미보정 1레인·100m 포켓 처방 비교");
@@ -198,8 +200,7 @@ namespace ParkingSim.Scenarios
             report.AppendLine("- 기존 비주차 포장 여부는 실제 지적·도면·운영 용도 조사로 확인해야 하며, 미확인 부지는 순이득에서 0비용으로 간주하지 않는다.");
             report.AppendLine("- 공개 취득/해제 시간은 Stanley 장비 참조값이다. PARKIE 등 다른 운송 유닛을 주장하려면 해당 장비 실측으로 프로파일을 교체해야 한다.");
 
-            Directory.CreateDirectory("output");
-            string path = Path.Combine("output", "v2_report.md");
+            string path = OutputDir.Resolve("v2_report.md");
             File.WriteAllText(path, report.ToString());
             Console.WriteLine(report.ToString());
             Console.WriteLine("리포트: " + Path.GetFullPath(path));

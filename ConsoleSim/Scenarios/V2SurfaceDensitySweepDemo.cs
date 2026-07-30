@@ -14,7 +14,6 @@ namespace ParkingSim.Scenarios
         {
             public string CapacityProfile;
             public SurfaceDensityTrialV2 Trial;
-            public long ElapsedMilliseconds;
         }
 
         public static void Run()
@@ -62,7 +61,6 @@ namespace ParkingSim.Scenarios
                     {
                         foreach ((int X, int Y) fire in fireCells)
                         {
-                            var stopwatch = Stopwatch.StartNew();
                             SurfaceDensityTrialV2 trial = SurfaceDensitySweepV2.Evaluate(
                                 vehicles,
                                 placement,
@@ -70,15 +68,13 @@ namespace ParkingSim.Scenarios
                                 fire,
                                 timeProfile,
                                 activeRobotCount: 4,
-                                budgetSeconds: 420.0,
+                                budgetSeconds: Core.TimeBudget.BaselineSeconds,
                                 maxHighLevelCandidates: 8,
                                 maxTick: 5000);
-                            stopwatch.Stop();
                             rows.Add(new MeasuredTrial
                             {
                                 CapacityProfile = capacity.Name,
                                 Trial = trial,
-                                ElapsedMilliseconds = stopwatch.ElapsedMilliseconds,
                             });
                             if (trial.Outcome == SurfaceDensityOutcomeV2.WithinBudget)
                                 safe++;
@@ -102,9 +98,8 @@ namespace ParkingSim.Scenarios
             }
             total.Stop();
 
-            Directory.CreateDirectory("output");
-            string detailPath = Path.Combine("output", "v2_surface_density_sweep.csv");
-            string summaryPath = Path.Combine("output", "v2_surface_density_summary.csv");
+            string detailPath = OutputDir.Resolve("v2_surface_density_sweep.csv");
+            string summaryPath = OutputDir.Resolve("v2_surface_density_summary.csv");
             WriteDetails(detailPath, rows);
             WriteSummary(summaryPath, rows, capacities.Select(c => c.Name));
 
@@ -126,7 +121,7 @@ namespace ParkingSim.Scenarios
                 "capacity_profile,staging_capacity,blocking_vehicles,density_percent," +
                 "placement,fire_x,fire_y,outcome,plan_success,candidates," +
                 "min_required_vehicles,moved_vehicles," +
-                "selected_route,ticks,seconds,safe_7min,expanded,elapsed_ms,reason",
+                "selected_route,ticks,seconds,safe_7min,expanded,reason",
             };
             foreach (MeasuredTrial measured in rows)
             {
@@ -151,7 +146,6 @@ namespace ParkingSim.Scenarios
                     row.Seconds.ToString("F1", CultureInfo.InvariantCulture),
                     row.WithinBudget ? 1 : 0,
                     row.ExpandedStates,
-                    measured.ElapsedMilliseconds,
                     Escape(row.FailReason)));
             }
             File.WriteAllLines(path, csv);

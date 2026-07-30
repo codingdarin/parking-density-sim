@@ -13,7 +13,7 @@ namespace ParkingSim.Scenarios
         {
             var csv = new List<string>
             {
-                "lanes,fire_m,vehicles,robots,candidates,success,ticks,seconds,expanded,elapsed_ms,reason",
+                "lanes,fire_m,vehicles,robots,candidates,success,ticks,seconds,expanded,reason",
             };
             Console.WriteLine("=== V2 운영 규모 거리 격자 ===");
             Console.WriteLine("lanes | fire_m | vehicles | success | ticks | seconds | expanded | elapsed_ms");
@@ -49,12 +49,10 @@ namespace ParkingSim.Scenarios
                         result.Ticks,
                         seconds.ToString("F1", CultureInfo.InvariantCulture),
                         result.ExpandedStates,
-                        stopwatch.ElapsedMilliseconds,
                         reason.Replace(',', ';')));
                 }
             }
-            Directory.CreateDirectory("output");
-            string path = Path.Combine("output", "v2_corridor_grid.csv");
+            string path = OutputDir.Resolve("v2_corridor_grid.csv");
             File.WriteAllLines(path, csv);
             Console.WriteLine("CSV: " + Path.GetFullPath(path));
         }

@@ -150,7 +150,7 @@ namespace ParkingSim.Core.V2
                 MovedVehicles = scenario.SelectedVehicleCount,
                 Ticks = plan.Ticks,
                 Seconds = seconds,
-                WithinSevenMinutes = seconds <= 420.0,
+                WithinSevenMinutes = seconds <= TimeBudget.BaselineSeconds,
                 ScenarioProblem = scenario.Problem,
                 Plan = plan,
             };

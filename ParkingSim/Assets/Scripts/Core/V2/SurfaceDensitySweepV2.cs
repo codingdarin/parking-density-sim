@@ -48,7 +48,7 @@ namespace ParkingSim.Core.V2
             (int X, int Y) fireCell,
             PhysicalTimeProfileV2 timeProfile,
             int activeRobotCount = 4,
-            double budgetSeconds = 420.0,
+            double budgetSeconds = TimeBudget.BaselineSeconds,
             int maxHighLevelCandidates = 8,
             int maxTick = 5000,
             int maxExpansionsPerPath = 200000)

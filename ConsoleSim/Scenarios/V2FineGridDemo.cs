@@ -56,11 +56,10 @@ namespace ParkingSim.Scenarios
             }
             totalWatch.Stop();
 
-            Directory.CreateDirectory("output");
-            string curvePath = Path.Combine("output", "v2_fine_distance_curve.csv");
+            string curvePath = OutputDir.Resolve("v2_fine_distance_curve.csv");
             var csv = new List<string>
             {
-                "lanes,fire_m,vehicles,success,ticks,seconds_at_2_5,expanded,elapsed_ms",
+                "lanes,fire_m,vehicles,success,ticks,seconds_at_2_5,expanded",
             };
             foreach (Row row in rows)
             {
@@ -71,8 +70,7 @@ namespace ParkingSim.Scenarios
                     row.Success ? 1 : 0,
                     row.Ticks,
                     (row.Ticks * 2.5).ToString("F1", CultureInfo.InvariantCulture),
-                    row.Expanded,
-                    row.ElapsedMs));
+                    row.Expanded));
             }
             File.WriteAllLines(curvePath, csv);
 
@@ -104,7 +102,7 @@ namespace ParkingSim.Scenarios
                         reaches[0], reaches[1], reaches[2]));
                 }
             }
-            string sensitivityPath = Path.Combine("output", "v2_time_sensitivity.csv");
+            string sensitivityPath = OutputDir.Resolve("v2_time_sensitivity.csv");
             File.WriteAllLines(sensitivityPath, sensitivityCsv);
             Console.WriteLine($"총 {rows.Count}점, {totalWatch.ElapsedMilliseconds:N0}ms");
             Console.WriteLine("CSV: " + Path.GetFullPath(curvePath));
