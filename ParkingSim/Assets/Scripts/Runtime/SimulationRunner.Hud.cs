@@ -16,6 +16,7 @@ namespace ParkingSim.Runtime
         {
             DrawGuidePanel();
             DrawControlPanel();
+            DrawReadinessPanel();
             if (_planningTask != null) DrawPlanningOverlay();
         }
 
@@ -150,6 +151,26 @@ namespace ParkingSim.Runtime
                     _requestedBlockingVehicleCount);
 
             y += 40f;
+            GUI.Label(new Rect(x, y, 260f, 22f), "가용 운송 유닛 (충전·고장 이탈)");
+            y += 24f;
+            for (int units = 4; units >= 1; units--)
+            {
+                float buttonX = x + (4 - units) * 64f;
+                if (DrawActionButton(
+                        new Rect(buttonX, y, 58f, 32f),
+                        units + "조",
+                        _availableUnitCount == units,
+                        canReplan && _availableUnitCount != units))
+                {
+                    _availableUnitCount = units;
+                    BeginPresetLoad(
+                        _includeSecondaryEntrances ? 1 : 0,
+                        _fireBuildingId,
+                        _blockingVehicleCount);
+                }
+            }
+
+            y += 42f;
             GUI.Label(new Rect(x, y, 260f, 22f), "재생 제어");
             y += 24f;
             bool canPlayback = _plan != null;

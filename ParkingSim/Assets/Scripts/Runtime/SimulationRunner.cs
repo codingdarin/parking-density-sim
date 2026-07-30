@@ -119,7 +119,7 @@ namespace ParkingSim.Runtime
         private float _planningStartedAt;
         private static readonly Rect GuideBounds = new Rect(12f, 12f, 620f, 260f);
         private const float ControlPanelWidth = 286f;
-        private const float ControlPanelHeight = 302f;
+        private const float ControlPanelHeight = 368f;
 
         private void Start()
         {
@@ -142,6 +142,7 @@ namespace ParkingSim.Runtime
                 return;
             }
             bool includeSecondaryEntrances = preset != 0;
+            int availableUnitCount = _availableUnitCount;
             OperationTimingV2 timing = _timeProfile.CreateOperationTiming();
             _pendingBuildingId = buildingId;
             _pendingBlockingVehicleCount = blockingVehicleCount;
@@ -163,7 +164,7 @@ namespace ParkingSim.Runtime
                         complex,
                         new ApartmentFireIncidentV2(buildingId),
                         includeSecondaryEntrances,
-                        activeRobotCount: 4,
+                        activeRobotCount: availableUnitCount,
                         generationOptions:
                             new EmergencyAccessRouteGenerationOptionsV2
                             {
@@ -290,6 +291,7 @@ namespace ParkingSim.Runtime
         private void Update()
         {
             CompletePendingPlanning();
+            UpdateReadinessBoard();
             int transportCamera;
             if (TransportCameraKeyPressed(out transportCamera))
                 SelectTransportCamera(transportCamera);
