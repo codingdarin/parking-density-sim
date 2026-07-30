@@ -79,7 +79,8 @@ namespace ParkingSim.Runtime
                 screenPosition.x,
                 Screen.height - screenPosition.y);
             return GuideBounds.Contains(guiPosition) ||
-                   ControlPanelBounds().Contains(guiPosition);
+                   ControlPanelBounds().Contains(guiPosition) ||
+                   ReadinessPanelBounds().Contains(guiPosition);
         }
 
         private static bool PauseTogglePressed()
