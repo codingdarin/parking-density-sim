@@ -1,6 +1,7 @@
 using System;
 using System.Collections.Generic;
 using System.Linq;
+using ParkingSim.Core;
 using ParkingSim.Core.V2;
 
 namespace ParkingSim.Tests
@@ -548,7 +549,7 @@ namespace ParkingSim.Tests
                     profile.Name + ": " + plan.FailReason);
                 double seconds = profile.PlanSeconds(plan.Ticks);
                 double lowerBound = profile.ServiceOnlyLowerBoundSeconds(20, 4);
-                Assert(seconds >= lowerBound && seconds > 420.0,
+                Assert(seconds >= lowerBound && seconds > TimeBudget.BaselineSeconds,
                     profile.Name + " 현실시간이 서비스 하한 또는 7분보다 짧음");
                 Console.WriteLine(
                     $"   {speed:F0}m/s: {plan.Ticks}틱/{seconds:F1}초, " +
@@ -939,7 +940,8 @@ namespace ParkingSim.Tests
                     built.Problem,
                     activeRobotCount: 4,
                     maxHighLevelCandidates: 8);
-                Assert(result.Success && result.PhysicallyValid && result.Ticks <= 168,
+                Assert(result.Success && result.PhysicallyValid &&
+                       result.Ticks <= TimeBudget.BaselineTicks,
                     $"포켓14 오프셋{offset} 7분 실패: {result.Ticks}틱 {result.FailReason}");
             }
         }

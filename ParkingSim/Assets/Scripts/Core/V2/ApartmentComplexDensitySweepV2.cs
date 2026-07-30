@@ -46,7 +46,7 @@ namespace ParkingSim.Core.V2
             int buildingId,
             bool includeSecondaryEntrances,
             PhysicalTimeProfileV2 timeProfile,
-            double budgetSeconds = 420.0)
+            double budgetSeconds = TimeBudget.BaselineSeconds)
         {
             if (scenario == null) throw new ArgumentNullException(nameof(scenario));
             if (session == null) throw new ArgumentNullException(nameof(session));

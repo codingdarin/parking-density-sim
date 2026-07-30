@@ -30,7 +30,7 @@ namespace ParkingSim.Core.Emergency
     /// </summary>
     public static class ClearanceEvaluator
     {
-        public const int BudgetTicks = 168; // 7분 = 420초 / 2.5초
+        public const int BudgetTicks = TimeBudget.BaselineTicks; // 7분 = 420초 / 2.5초
 
         public static ClearanceReport Evaluate(ParkingLot lot, EmergencyResult plan)
         {

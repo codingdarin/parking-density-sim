@@ -123,7 +123,7 @@ namespace ParkingSim.Scenarios
             row.MovedVehicles = selected.Scenario.SelectedVehicleCount;
             row.Ticks = selected.Plan.Ticks;
             row.Seconds = profile.PlanSeconds(row.Ticks);
-            row.WithinSevenMinutes = row.Seconds <= 420.0;
+            row.WithinSevenMinutes = row.Seconds <= Core.TimeBudget.BaselineSeconds;
             return row;
         }
 

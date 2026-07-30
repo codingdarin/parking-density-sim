@@ -3,6 +3,7 @@ using System.Collections.Generic;
 using System.Diagnostics;
 using System.Globalization;
 using System.IO;
+using ParkingSim.Core;
 using ParkingSim.Core.V2;
 
 namespace ParkingSim.Scenarios
@@ -19,7 +20,7 @@ namespace ParkingSim.Scenarios
             };
             var csv = new List<string>
             {
-                "lanes,fire_m,vehicles,success,ticks,seconds,safe_7min,expanded,elapsed_ms",
+                "lanes,fire_m,vehicles,success,ticks,seconds,safe_7min,expanded",
             };
             Console.WriteLine("=== V2 7분 교차점 5m 보강 ===");
             Console.WriteLine("lanes | fire_m | vehicles | ticks | seconds | safe | expanded | elapsed_ms");
@@ -35,7 +36,7 @@ namespace ParkingSim.Scenarios
                     maxHighLevelCandidates: 8);
                 stopwatch.Stop();
                 bool success = built.Success && result.Success && result.PhysicallyValid;
-                bool safe = success && result.Ticks <= 168;
+                bool safe = success && result.Ticks <= TimeBudget.BaselineTicks;
                 double seconds = result.Ticks * 2.5;
                 Console.WriteLine(
                     $"{condition.Lanes,5} | {condition.Fire,6} | {built.SelectedVehicleCount,8} | " +
@@ -49,11 +50,9 @@ namespace ParkingSim.Scenarios
                     result.Ticks,
                     seconds.ToString("F1", CultureInfo.InvariantCulture),
                     safe ? 1 : 0,
-                    result.ExpandedStates,
-                    stopwatch.ElapsedMilliseconds));
+                    result.ExpandedStates));
             }
-            Directory.CreateDirectory("output");
-            string path = Path.Combine("output", "v2_safety_crossing.csv");
+            string path = OutputDir.Resolve("v2_safety_crossing.csv");
             File.WriteAllLines(path, csv);
             Console.WriteLine("CSV: " + Path.GetFullPath(path));
         }
