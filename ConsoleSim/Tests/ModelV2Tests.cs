@@ -8,7 +8,7 @@ namespace ParkingSim.Tests
 {
     public static class ModelV2Tests
     {
-        public const int ExpectedGateCount = 62;
+        public const int ExpectedGateCount = 67;
 
         public static int RunAll()
         {
@@ -75,6 +75,11 @@ namespace ParkingSim.Tests
             passed += Run("60 8동 밀도 팩토리 — 차량0~22·기하 보존", TestApartmentComplexDensityFactory);
             passed += Run("61 8동 후보 캐시 — 밀도 간 중심선 재사용", TestApartmentComplexRouteCatalogReuse);
             passed += Run("62 8동 하한 가지치기 — 선택 결과 동일", TestApartmentComplexPruningEquivalence);
+            passed += Run("63 교란 검증 — 무효 봉쇄 거부·원본 불변", TestDisturbanceValidation);
+            passed += Run("64 교란 무관 봉쇄 — 원거리 봉쇄에 결과 불변", TestDisturbanceIrrelevantBlockage);
+            passed += Run("65 교란 경로 회피 — 선택 경로 봉쇄 시 우회 성공", TestDisturbanceReroute);
+            passed += Run("66 교란 접근 불능 — 종점 협착을 실패 사유로 반환", TestDisturbanceInfeasible);
+            passed += Run("67 교란 재현성 — 유닛 감소 포함 동일 결과", TestDisturbanceReproducibility);
             Console.WriteLine(
                 $"\nV2 타당성 게이트 {passed}/{ExpectedGateCount} 통과");
             return passed;
@@ -1567,6 +1572,180 @@ namespace ParkingSim.Tests
                         candidate.PhysicalLowerBoundTicks <=
                         candidate.Plan.Ticks),
                 "물리시간 하한이 실제 성공 계획보다 큼");
+        }
+
+        private static void TestDisturbanceValidation()
+        {
+            ApartmentComplexScenarioV2 scenario =
+                ApartmentComplexScenarioFactoryV2.BuildDensity(6);
+            foreach (var (cell, label) in new[]
+                     {
+                         ((7, 10), "건물 풋프린트(floor 밖)"),
+                         ((12, 17), "작업 슬롯"),
+                         ((0, 1), "로봇 시작점"),
+                         ((3, 18), "서문 진입구"),
+                         ((9, 3), "전용구역 접근셀"),
+                     })
+            {
+                DisturbedComplexBuildResultV2 rejected =
+                    ApartmentComplexDisturbanceV2.Apply(
+                        scenario,
+                        new ComplexDisturbanceV2("무효-" + label, new[] { cell }));
+                Assert(!rejected.Success && rejected.FailReason != null,
+                    label + " 봉쇄가 거부되지 않음");
+            }
+            DisturbedComplexBuildResultV2 overlapped =
+                ApartmentComplexDisturbanceV2.Apply(
+                    scenario,
+                    new ComplexDisturbanceV2(
+                        "무효-비관리차량",
+                        unmanagedVehicles: new[]
+                        {
+                            new VehiclePose(12, 17, VehicleOrientation.Horizontal),
+                        }));
+            Assert(!overlapped.Success && overlapped.FailReason != null,
+                "슬롯과 겹치는 비관리 차량이 거부되지 않음");
+            DisturbedComplexBuildResultV2 valid =
+                ApartmentComplexDisturbanceV2.Apply(
+                    scenario,
+                    new ComplexDisturbanceV2("유효", new[] { (7, 17), (7, 18) }));
+            Assert(valid.Success &&
+                   !valid.Scenario.BaseProblem.IsFloor(7, 17) &&
+                   !valid.Scenario.BaseProblem.IsFloor(7, 18) &&
+                   scenario.BaseProblem.IsFloor(7, 17) &&
+                   scenario.BaseProblem.IsFloor(7, 18),
+                "유효 봉쇄가 사본에만 적용되고 원본은 불변이어야 함");
+        }
+
+        private static void TestDisturbanceIrrelevantBlockage()
+        {
+            ApartmentComplexScenarioV2 scenario =
+                ApartmentComplexScenarioFactoryV2.BuildDensity(6);
+            EmergencyAccessRouteGenerationOptionsV2 options = ComplexOptions();
+            var incident = new ApartmentFireIncidentV2(101);
+            ApartmentComplexPlanResultV2 baseline =
+                ApartmentComplexEmergencyPlannerV2.Solve(
+                    scenario, incident, false, 4, options, maxTick: 800);
+            DisturbedComplexBuildResultV2 disturbed =
+                ApartmentComplexDisturbanceV2.Apply(
+                    scenario,
+                    new ComplexDisturbanceV2(
+                        "동측 원거리 봉쇄", new[] { (55, 8), (55, 9) }));
+            Assert(disturbed.Success, disturbed.FailReason);
+            ApartmentComplexPlanResultV2 result =
+                ApartmentComplexEmergencyPlannerV2.Solve(
+                    disturbed.Scenario, incident, false, 4, options, maxTick: 800);
+            Assert(baseline.Success && result.Success,
+                baseline.FailReason ?? result.FailReason);
+            Assert(result.Selected.Entrance.Name ==
+                       baseline.Selected.Entrance.Name &&
+                   result.Selected.AutomaticPlan.Plan.Selected.Route.Name ==
+                       baseline.Selected.AutomaticPlan.Plan.Selected.Route.Name &&
+                   result.Selected.AutomaticPlan.Plan.Selected.Plan.Ticks ==
+                       baseline.Selected.AutomaticPlan.Plan.Selected.Plan.Ticks,
+                "101동 서측 대응과 무관한 동측 봉쇄가 결과를 바꿈");
+        }
+
+        private static void TestDisturbanceReroute()
+        {
+            ApartmentComplexScenarioV2 scenario =
+                ApartmentComplexScenarioFactoryV2.BuildDensity(6);
+            EmergencyAccessRouteGenerationOptionsV2 options = ComplexOptions();
+            var incident = new ApartmentFireIncidentV2(101);
+            ApartmentComplexPlanResultV2 baseline =
+                ApartmentComplexEmergencyPlannerV2.Solve(
+                    scenario, incident, true, 4, options, maxTick: 800);
+            Assert(baseline.Success, baseline.FailReason);
+            EmergencyAccessRouteV2 baselineRoute =
+                baseline.Selected.AutomaticPlan.Plan.Selected.Route;
+            (int X, int Y) blocked = default;
+            bool found = false;
+            foreach ((int x, int y) in baselineRoute.RequiredCells)
+            {
+                DisturbedComplexBuildResultV2 probe =
+                    ApartmentComplexDisturbanceV2.Apply(
+                        scenario,
+                        new ComplexDisturbanceV2("탐침", new[] { (x, y) }));
+                if (!probe.Success) continue;
+                blocked = (x, y);
+                found = true;
+                break;
+            }
+            Assert(found, "선택 경로에 봉쇄 가능한 셀이 없음");
+            DisturbedComplexBuildResultV2 disturbed =
+                ApartmentComplexDisturbanceV2.Apply(
+                    scenario,
+                    new ComplexDisturbanceV2("선택 경로 봉쇄", new[] { blocked }));
+            ApartmentComplexPlanResultV2 rerouted =
+                ApartmentComplexEmergencyPlannerV2.Solve(
+                    disturbed.Scenario, incident, true, 4, options, maxTick: 800);
+            Assert(rerouted.Success,
+                "선택 경로 봉쇄 후 우회 개통 실패: " + rerouted.FailReason);
+            Assert(!rerouted.Selected.AutomaticPlan.Plan.Selected.Route
+                    .RequiredCells.Contains(blocked),
+                "우회 경로가 봉쇄 셀을 다시 포함함");
+        }
+
+        private static void TestDisturbanceInfeasible()
+        {
+            ApartmentComplexScenarioV2 scenario =
+                ApartmentComplexScenarioFactoryV2.BuildDensity(6);
+            DisturbedComplexBuildResultV2 disturbed =
+                ApartmentComplexDisturbanceV2.Apply(
+                    scenario,
+                    new ComplexDisturbanceV2(
+                        "101동 종점 협착",
+                        new[]
+                        {
+                            (8, 36), (8, 37), (8, 38),
+                            (10, 36), (10, 37), (10, 38),
+                        }));
+            Assert(disturbed.Success, disturbed.FailReason);
+            ApartmentComplexPlanResultV2 result =
+                ApartmentComplexEmergencyPlannerV2.Solve(
+                    disturbed.Scenario,
+                    new ApartmentFireIncidentV2(101),
+                    includeSecondaryEntrances: true,
+                    activeRobotCount: 4,
+                    generationOptions: ComplexOptions(),
+                    maxTick: 800);
+            Assert(!result.Success &&
+                   result.Failure != EmergencyAccessFailureV2.None &&
+                   result.FailReason != null,
+                "전용구역 접근 협착이 예외 없는 실패 사유로 반환되어야 함");
+        }
+
+        private static void TestDisturbanceReproducibility()
+        {
+            ApartmentComplexScenarioV2 scenario =
+                ApartmentComplexScenarioFactoryV2.BuildDensity(6);
+            EmergencyAccessRouteGenerationOptionsV2 options = ComplexOptions();
+            var disturbance = new ComplexDisturbanceV2(
+                "중앙 종축 봉쇄·유닛 2조", new[] { (16, 9), (16, 10) },
+                activeRobotCount: 2);
+            var incident = new ApartmentFireIncidentV2(103);
+            ApartmentComplexPlanResultV2[] runs = new ApartmentComplexPlanResultV2[2];
+            for (int attempt = 0; attempt < runs.Length; attempt++)
+            {
+                DisturbedComplexBuildResultV2 disturbed =
+                    ApartmentComplexDisturbanceV2.Apply(scenario, disturbance);
+                Assert(disturbed.Success, disturbed.FailReason);
+                runs[attempt] = ApartmentComplexEmergencyPlannerV2.Solve(
+                    disturbed.Scenario,
+                    incident,
+                    includeSecondaryEntrances: true,
+                    activeRobotCount: disturbance.ActiveRobotCount,
+                    generationOptions: options,
+                    maxTick: 800);
+                Assert(runs[attempt].Success,
+                    "유닛 2조 교란 대응 실패: " + runs[attempt].FailReason);
+            }
+            Assert(runs[0].Selected.Entrance.Name == runs[1].Selected.Entrance.Name &&
+                   runs[0].Selected.AutomaticPlan.Plan.Selected.Route.Name ==
+                       runs[1].Selected.AutomaticPlan.Plan.Selected.Route.Name &&
+                   runs[0].Selected.AutomaticPlan.Plan.Selected.Plan.Ticks ==
+                       runs[1].Selected.AutomaticPlan.Plan.Selected.Plan.Ticks,
+                "같은 교란·유닛 수의 결과가 재현되지 않음");
         }
 
         private static EmergencyAccessRouteGenerationOptionsV2 ComplexOptions()
