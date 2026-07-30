@@ -8,7 +8,7 @@ namespace ParkingSim.Tests
 {
     public static class ModelV2Tests
     {
-        public const int ExpectedGateCount = 67;
+        public const int ExpectedGateCount = 72;
 
         public static int RunAll()
         {
@@ -80,6 +80,11 @@ namespace ParkingSim.Tests
             passed += Run("65 교란 경로 회피 — 선택 경로 봉쇄 시 우회 성공", TestDisturbanceReroute);
             passed += Run("66 교란 접근 불능 — 종점 협착을 실패 사유로 반환", TestDisturbanceInfeasible);
             passed += Run("67 교란 재현성 — 유닛 감소 포함 동일 결과", TestDisturbanceReproducibility);
+            passed += Run("68 배터리 회계 — 소모·잔량 보존과 무발동", TestBatteryAccounting);
+            passed += Run("69 핸드오버 추출 — 인도·잔여·적치 정합", TestHandoverStateExtraction);
+            passed += Run("70 핸드오버 조립 — 잔여 계획 유효·시간 합성", TestHandoverComposition);
+            passed += Run("71 핸드오버 교체 — 충전소 출발 유닛 합류", TestHandoverReplacement);
+            passed += Run("72 핸드오버 재현성 — 동일 입력 동일 결과", TestHandoverReproducibility);
             Console.WriteLine(
                 $"\nV2 타당성 게이트 {passed}/{ExpectedGateCount} 통과");
             return passed;
@@ -1746,6 +1751,155 @@ namespace ParkingSim.Tests
                    runs[0].Selected.AutomaticPlan.Plan.Selected.Plan.Ticks ==
                        runs[1].Selected.AutomaticPlan.Plan.Selected.Plan.Ticks,
                 "같은 교란·유닛 수의 결과가 재현되지 않음");
+        }
+
+        private static (EmergencyProblemV2 Problem, PipelinedPlanResultV2 Plan)
+            BatteryGateFixture()
+        {
+            EmergencyScenarioBuildResultV2 built =
+                CorridorScenarioFactoryV2.BuildEmergency(1, 30);
+            Assert(built.Success, "배터리 픽스처 시나리오 실패: " + built.FailReason);
+            PipelinedPlanResultV2 plan = PipelinedPrioritizedPlannerV2.Solve(
+                built.Problem, activeRobotCount: 2, maxHighLevelCandidates: 8);
+            Assert(plan.Success && plan.PhysicallyValid,
+                "배터리 픽스처 계획 실패: " + plan.FailReason);
+            Assert(plan.Missions.Count(m => m.RobotIndex == 0) >= 2,
+                "픽스처 유닛0의 미션이 2개 미만이라 경계 퇴역을 시험할 수 없음");
+            return (built.Problem, plan);
+        }
+
+        private static int[] LowChargeForRobotZero(
+            PipelinedPlanResultV2 plan, BatteryModelV2 battery)
+        {
+            PipelinedMissionV2 first = plan.Missions
+                .Where(m => m.RobotIndex == 0)
+                .OrderBy(m => m.StartTick)
+                .First();
+            return new[]
+            {
+                BatteryHandoverV2.MissionCost(first) + battery.ReserveTicks,
+                battery.CapacityTicks,
+            };
+        }
+
+        private static void TestBatteryAccounting()
+        {
+            (EmergencyProblemV2 problem, PipelinedPlanResultV2 plan) =
+                BatteryGateFixture();
+            var battery = new BatteryModelV2(10000, 100);
+            BatteryHandoverResultV2 result = BatteryHandoverV2.Evaluate(
+                problem, plan, battery, new[] { 10000, 10000 });
+            Assert(result.Success && !result.HandoverOccurred &&
+                   result.TotalTicks == plan.Ticks && result.DelayTicks == 0,
+                "만충 함대에서 핸드오버가 발동하거나 시간이 변함");
+            for (int robot = 0; robot < 2; robot++)
+            {
+                int expected = plan.Missions
+                    .Where(m => m.RobotIndex == robot)
+                    .Sum(BatteryHandoverV2.MissionCost);
+                Assert(result.ConsumedTicks[robot] == expected &&
+                       result.RemainingTicks[robot] == 10000 - expected,
+                    $"유닛{robot} 소모·잔량 회계 불일치");
+            }
+        }
+
+        private static void TestHandoverStateExtraction()
+        {
+            (EmergencyProblemV2 problem, PipelinedPlanResultV2 plan) =
+                BatteryGateFixture();
+            var battery = new BatteryModelV2(10000, 100);
+            BatteryHandoverResultV2 result = BatteryHandoverV2.Evaluate(
+                problem, plan, battery, LowChargeForRobotZero(plan, battery));
+            Assert(result.HandoverOccurred && result.RetiredRobot == 0,
+                "유닛0 미션 경계 퇴역이 발동하지 않음");
+            Assert(result.DeliveredVehicles.Count >= 1 &&
+                   result.SyncTick >= result.RetireDecisionTick,
+                "인도 완료분 또는 동기 시점이 비정상");
+            EmergencyProblemV2 residual = result.ResidualProblem;
+            Assert(residual != null, "잔여 문제가 없음: " + result.FailReason);
+            Assert(residual.VehicleCount ==
+                   problem.VehicleCount - result.DeliveredVehicles.Count,
+                "인도 + 잔여 차량 수가 전체와 다름");
+            Assert(residual.StagingCapacity ==
+                   problem.StagingCapacity - result.DeliveredVehicles.Count,
+                "잔여 적치 용량이 인도 수만큼 줄지 않음");
+            Assert(residual.FixedVehiclePoses.Count ==
+                   problem.FixedVehiclePoses.Count + result.DeliveredVehicles.Count,
+                "인도 완료 차량이 고정 차량으로 전환되지 않음");
+            Assert(residual.RobotStarts.Count == 1 &&
+                   residual.RobotStarts.Distinct().Count() == 1,
+                "생존 유닛 시작점 구성이 비정상");
+
+            // t=0 출동 불능 경계: 유닛0이 첫 미션조차 못 받는 전량 —
+            // 그 미션의 차량이 "인도 완료"로 잘못 집계되면 안 된다.
+            PipelinedMissionV2 first = plan.Missions
+                .Where(m => m.RobotIndex == 0)
+                .OrderBy(m => m.StartTick)
+                .First();
+            int[] depleted =
+            {
+                BatteryHandoverV2.MissionCost(first) + battery.ReserveTicks - 1,
+                battery.CapacityTicks,
+            };
+            BatteryHandoverResultV2 immediate = BatteryHandoverV2.Evaluate(
+                problem, plan, battery, depleted);
+            Assert(immediate.HandoverOccurred &&
+                   immediate.RetiredRobot == 0 &&
+                   immediate.RetireDecisionTick == 0 &&
+                   immediate.ConsumedTicks[0] == 0 &&
+                   !immediate.DeliveredVehicles.Contains(first.VehicleIndex),
+                "t=0 출동 불능 유닛의 미수행 미션이 인도분으로 새어 들어감");
+        }
+
+        private static void TestHandoverComposition()
+        {
+            (EmergencyProblemV2 problem, PipelinedPlanResultV2 plan) =
+                BatteryGateFixture();
+            var battery = new BatteryModelV2(10000, 100);
+            BatteryHandoverResultV2 result = BatteryHandoverV2.Evaluate(
+                problem, plan, battery, LowChargeForRobotZero(plan, battery));
+            Assert(result.Success,
+                "핸드오버 잔여 재계획 실패: " + result.FailReason);
+            Assert(result.ResidualPlan.Success && result.ResidualPlan.PhysicallyValid,
+                "잔여 계획이 물리 검증을 통과하지 못함");
+            Assert(result.TotalTicks ==
+                   result.SyncTick + result.ResidualPlan.Ticks &&
+                   result.DelayTicks == result.TotalTicks - plan.Ticks,
+                "핸드오버 시간 합성 공식이 어긋남");
+        }
+
+        private static void TestHandoverReplacement()
+        {
+            (EmergencyProblemV2 problem, PipelinedPlanResultV2 plan) =
+                BatteryGateFixture();
+            var battery = new BatteryModelV2(10000, 100);
+            BatteryHandoverResultV2 result = BatteryHandoverV2.Evaluate(
+                problem, plan, battery, LowChargeForRobotZero(plan, battery),
+                replacementStart: (11, 21));
+            Assert(result.Success && result.HandoverOccurred,
+                "교체 유닛 핸드오버 실패: " + result.FailReason);
+            Assert(result.ResidualProblem.RobotStarts.Count == 2 &&
+                   result.ResidualProblem.RobotStarts.Contains((11, 21)),
+                "충전소 출발 교체 유닛이 잔여 문제에 합류하지 않음");
+        }
+
+        private static void TestHandoverReproducibility()
+        {
+            (EmergencyProblemV2 problem, PipelinedPlanResultV2 plan) =
+                BatteryGateFixture();
+            var battery = new BatteryModelV2(10000, 100);
+            int[] charges = LowChargeForRobotZero(plan, battery);
+            BatteryHandoverResultV2 first = BatteryHandoverV2.Evaluate(
+                problem, plan, battery, charges, replacementStart: (11, 21));
+            BatteryHandoverResultV2 second = BatteryHandoverV2.Evaluate(
+                problem, plan, battery, charges, replacementStart: (11, 21));
+            Assert(first.Success && second.Success,
+                first.FailReason ?? second.FailReason);
+            Assert(first.RetiredRobot == second.RetiredRobot &&
+                   first.SyncTick == second.SyncTick &&
+                   first.TotalTicks == second.TotalTicks &&
+                   first.ResidualPlan.Ticks == second.ResidualPlan.Ticks,
+                "같은 입력의 핸드오버 결과가 재현되지 않음");
         }
 
         private static EmergencyAccessRouteGenerationOptionsV2 ComplexOptions()
