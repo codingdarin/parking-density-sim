@@ -8,7 +8,7 @@ namespace ParkingSim.Tests
 {
     public static class ModelV2Tests
     {
-        public const int ExpectedGateCount = 76;
+        public const int ExpectedGateCount = 77;
 
         public static int RunAll()
         {
@@ -86,6 +86,7 @@ namespace ParkingSim.Tests
             passed += Run("71 핸드오버 교체 — 충전소 출발 유닛 합류", TestHandoverReplacement);
             passed += Run("72 핸드오버 재현성 — 동일 입력 동일 결과", TestHandoverReproducibility);
             passed += Run("76 핸드오버 정차 간섭 — 정차 유닛 셀 통행 불가", TestHandoverParkedInterference);
+            passed += Run("77 단지A 간선 재지정 — 종축 전용구역·저이동 개통", TestSiteAArterialZone);
             passed += Run("73 단지A 기하 — 만차 배경·전용구역·밀도 보존", TestSiteAGeometry);
             passed += Run("74 단지A 평가 — 배경 주차열 이동 필수·재현", TestSiteAEvaluation);
             passed += Run("75 단지A 적치 반사실 — 재배치·확장 기하와 재현", TestSiteAStagingCounterfactual);
@@ -2053,6 +2054,71 @@ namespace ParkingSim.Tests
             }
             Assert(result.ResidualPlan.Success && result.ResidualPlan.PhysicallyValid,
                 "정차 봉쇄 반영 후 잔여 계획 실패: " + result.ResidualPlan.FailReason);
+        }
+
+        private static void TestSiteAArterialZone()
+        {
+            Assert(SiteABlockScenarioFactoryV2.MaximumVariableSlots(
+                       SiteZonePlacementV2.ArterialFrontage) == 12 &&
+                   SiteABlockScenarioFactoryV2.MaximumVariableSlots(
+                       SiteZonePlacementV2.AlleyFrontage) == 16,
+                "배치안별 가변 최대 면수가 어긋남");
+            ApartmentComplexScenarioV2 arterial =
+                SiteABlockScenarioFactoryV2.BuildDensity(
+                    0,
+                    null,
+                    SiteStagingLayoutV2.SouthWestOnly,
+                    SiteZonePlacementV2.ArterialFrontage);
+            var slotCells = new HashSet<(int X, int Y)>();
+            foreach (ParkingSlotV2 slot in arterial.BaseProblem.Slots)
+            {
+                slotCells.Add((slot.Pose.X, slot.Pose.Y));
+                slotCells.Add(slot.Pose.SecondCell);
+            }
+            foreach (ApartmentBuildingV2 building in arterial.Buildings)
+                foreach ((int x, int y) in building.FireEngineZone.Cells)
+                {
+                    Assert(x >= 28 && x <= 31,
+                        "재지정 전용구역이 중앙 종축 밖임");
+                    Assert(arterial.BaseProblem.IsFloor(x, y),
+                        "재지정 전용구역 셀이 floor 밖임");
+                    Assert(!slotCells.Contains((x, y)),
+                        "재지정 전용구역 셀을 주차 슬롯이 점유함");
+                }
+
+            EmergencyAccessRouteGenerationOptionsV2 options = ComplexOptions();
+            ApartmentComplexPlanResultV2 repeat = null;
+            foreach (ApartmentBuildingV2 building in arterial.Buildings)
+            {
+                ApartmentComplexPlanResultV2 result =
+                    ApartmentComplexEmergencyPlannerV2.Solve(
+                        arterial,
+                        new ApartmentFireIncidentV2(building.Id),
+                        includeSecondaryEntrances: true,
+                        activeRobotCount: 4,
+                        generationOptions: options,
+                        maxTick: 2000);
+                Assert(result.Success,
+                    building.Id + "동 간선 재지정 개통 실패: " + result.FailReason);
+                int moved = result.Selected.AutomaticPlan.Plan.Selected
+                    .Scenario.SelectedVehicleCount;
+                Assert(moved <= 4,
+                    building.Id + "동 간선 재지정에서 골목 연석열이 이동됨: " +
+                    moved + "대");
+                if (building.Id == 1) repeat = result;
+            }
+            ApartmentComplexPlanResultV2 again =
+                ApartmentComplexEmergencyPlannerV2.Solve(
+                    arterial,
+                    new ApartmentFireIncidentV2(1),
+                    includeSecondaryEntrances: true,
+                    activeRobotCount: 4,
+                    generationOptions: options,
+                    maxTick: 2000);
+            Assert(again.Success && repeat != null &&
+                   again.Selected.AutomaticPlan.Plan.Selected.Plan.Ticks ==
+                   repeat.Selected.AutomaticPlan.Plan.Selected.Plan.Ticks,
+                "간선 재지정 결과가 재현되지 않음");
         }
 
         private static EmergencyAccessRouteGenerationOptionsV2 ComplexOptions()
