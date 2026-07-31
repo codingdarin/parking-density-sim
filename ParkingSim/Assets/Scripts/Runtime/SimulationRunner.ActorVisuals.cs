@@ -352,11 +352,19 @@ namespace ParkingSim.Runtime
                     new Vector3(0f, 0.02f, 0f),
                     new Vector3(0.30f, 0.065f, 0.50f),
                     new Color(0.10f, 0.12f, 0.15f));
-                GameObject deck = CreateChildPrimitive(
+                // 덱 리그: 스케일 없는 빈 노드 아래에 덱 판과 암 피벗을 둔다.
+                // 스케일된 큐브의 자식으로 붙이면 암이 부모 비균등 스케일을
+                // 상속받아 두께 ~2mm로 짜부라져 보이지 않는다 (기존 버그).
+                var deck = new GameObject(moduleName + "-LiftDeckRig");
+                deck.transform.SetParent(
+                    module.transform, worldPositionStays: false);
+                deck.transform.localPosition = new Vector3(0f, 0.061f, 0f);
+                deck.transform.localRotation = Quaternion.identity;
+                CreateChildPrimitive(
                     PrimitiveType.Cube,
-                    module.transform,
+                    deck.transform,
                     moduleName + "-LiftDeck",
-                    new Vector3(0f, 0.061f, 0f),
+                    Vector3.zero,
                     new Vector3(0.27f, 0.022f, 0.45f),
                     new Color(0.20f, 0.23f, 0.27f));
                 decks[moduleIndex] = deck.transform;
