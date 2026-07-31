@@ -166,6 +166,7 @@ namespace ParkingSim.Runtime
             _missions.Clear();
             _threeDimensionalLabels.Clear();
             BuildPresentationGround();
+            BuildSlotAnalysisOverlay();
             BuildApartmentContext();
             BuildFixedCars();
             BuildMovableCars();
@@ -330,6 +331,7 @@ namespace ParkingSim.Runtime
                 _missions.Add(mission.VehicleIndex, mission);
 
             BuildPresentationGround();
+            BuildSlotAnalysisOverlay();
             BuildApartmentContext();
             BuildRouteOverlays();
             BuildFireMarker();
