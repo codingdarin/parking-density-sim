@@ -165,7 +165,6 @@ namespace ParkingSim.Runtime
             _carTrackingFrames.Clear();
             _missions.Clear();
             _threeDimensionalLabels.Clear();
-            BuildControlGrid();
             BuildPresentationGround();
             BuildApartmentContext();
             BuildFixedCars();
@@ -330,7 +329,6 @@ namespace ParkingSim.Runtime
             foreach (PipelinedMissionV2 mission in _plan.Missions)
                 _missions.Add(mission.VehicleIndex, mission);
 
-            BuildControlGrid();
             BuildPresentationGround();
             BuildApartmentContext();
             BuildRouteOverlays();

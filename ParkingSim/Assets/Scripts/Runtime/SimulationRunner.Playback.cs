@@ -103,7 +103,11 @@ namespace ParkingSim.Runtime
                 GameObject frame;
                 if (_carTrackingFrames.TryGetValue(vehicle, out frame))
                 {
-                    // 플럼밥: 차량 상공에서 천천히 회전·부유
+                    // 플럼밥: 차량 상공에서 천천히 회전·부유.
+                    // 전체 뷰에서는 크게, 유닛 추적 카메라에서는 원 크기 유지.
+                    float markerScale =
+                        _selectedTransportCamera >= 0 ? 1f : 1.6f;
+                    frame.transform.localScale = Vector3.one * markerScale;
                     frame.transform.position = position + Vector3.up *
                         (1.05f + Mathf.Sin(Time.time * 2.4f + vehicle) * 0.05f);
                     frame.transform.rotation = Quaternion.Euler(

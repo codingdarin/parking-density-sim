@@ -11,27 +11,6 @@ namespace ParkingSim.Runtime
 {
     partial class SimulationRunner
     {
-        private void BuildControlGrid()
-        {
-            for (int y = 0; y < _problem.Height; y++)
-            {
-                for (int x = 0; x < _problem.Width; x++)
-                {
-                    var tile = GameObject.CreatePrimitive(PrimitiveType.Cube);
-                    Track(tile, SimulationVisualLayer.Control);
-                    tile.name = "ControlCell-" + x + "-" + y;
-                    bool floor = _problem.IsFloor(x, y);
-                    float height = floor
-                        ? 0.12f
-                        : 0.90f + ((x * 7 + y * 3) % 4) * 0.16f;
-                    tile.transform.position = new Vector3(
-                        x, floor ? -0.08f : height / 2f - 0.08f, y);
-                    tile.transform.localScale = new Vector3(0.94f, height, 0.94f);
-                    SetColor(tile, CellColor(x, y));
-                }
-            }
-        }
-
         private void BuildPresentationGround()
         {
             EnsureSiteMaterials();
