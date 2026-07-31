@@ -8,7 +8,7 @@ namespace ParkingSim.Tests
 {
     public static class ModelV2Tests
     {
-        public const int ExpectedGateCount = 74;
+        public const int ExpectedGateCount = 75;
 
         public static int RunAll()
         {
@@ -87,6 +87,7 @@ namespace ParkingSim.Tests
             passed += Run("72 핸드오버 재현성 — 동일 입력 동일 결과", TestHandoverReproducibility);
             passed += Run("73 단지A 기하 — 만차 배경·전용구역·밀도 보존", TestSiteAGeometry);
             passed += Run("74 단지A 평가 — 배경 주차열 이동 필수·재현", TestSiteAEvaluation);
+            passed += Run("75 단지A 적치 반사실 — 재배치·확장 기하와 재현", TestSiteAStagingCounterfactual);
             Console.WriteLine(
                 $"\nV2 타당성 게이트 {passed}/{ExpectedGateCount} 통과");
             return passed;
@@ -1975,6 +1976,55 @@ namespace ParkingSim.Tests
                    runs[0].Selected.AutomaticPlan.Plan.Selected.Route.Name ==
                    runs[1].Selected.AutomaticPlan.Plan.Selected.Route.Name,
                 "단지A 평가가 재현되지 않음");
+        }
+
+        private static void TestSiteAStagingCounterfactual()
+        {
+            ApartmentComplexScenarioV2 baseline =
+                SiteABlockScenarioFactoryV2.BuildDensity(0);
+            ApartmentComplexScenarioV2 redistributed =
+                SiteABlockScenarioFactoryV2.BuildDensity(
+                    0, stagingLayout: SiteStagingLayoutV2.Redistributed);
+            ApartmentComplexScenarioV2 extended =
+                SiteABlockScenarioFactoryV2.BuildDensity(
+                    0, stagingLayout: SiteStagingLayoutV2.Extended);
+            Assert(redistributed.BaseProblem.StagingCapacity == 12 &&
+                   extended.BaseProblem.StagingCapacity == 18,
+                "반사실 적치 면수(재배치 12·확장 18)가 어긋남");
+            Assert(redistributed.BaseProblem.Slots
+                       .Count(s => s.Kind == SlotKind.Staging && s.Pose.X == 59) == 6 &&
+                   extended.BaseProblem.Slots
+                       .Count(s => s.Kind == SlotKind.Staging && s.Pose.X == 59) == 6,
+                "동측 연석 적치 6면이 배치되지 않음");
+            // 반사실은 적치만 바꾼다 — 차량·건물·진입구 기하는 기준선과 동일해야 함
+            Assert(redistributed.BaseProblem.VehicleCount ==
+                       baseline.BaseProblem.VehicleCount &&
+                   redistributed.BaseProblem.Slots.Count(s =>
+                       s.Kind == SlotKind.Blocking) ==
+                   baseline.BaseProblem.Slots.Count(s =>
+                       s.Kind == SlotKind.Blocking),
+                "반사실이 적치 외의 구성(차량·주차 슬롯)을 바꿈");
+
+            EmergencyAccessRouteGenerationOptionsV2 options = ComplexOptions();
+            ApartmentComplexPlanResultV2[] runs = new ApartmentComplexPlanResultV2[2];
+            for (int attempt = 0; attempt < runs.Length; attempt++)
+            {
+                ApartmentComplexScenarioV2 scenario =
+                    SiteABlockScenarioFactoryV2.BuildDensity(
+                        0, stagingLayout: SiteStagingLayoutV2.Redistributed);
+                runs[attempt] = ApartmentComplexEmergencyPlannerV2.Solve(
+                    scenario,
+                    new ApartmentFireIncidentV2(2),
+                    includeSecondaryEntrances: true,
+                    activeRobotCount: 4,
+                    generationOptions: options,
+                    maxTick: 2000);
+                Assert(runs[attempt].Success,
+                    "재배치안 2동 개통 실패: " + runs[attempt].FailReason);
+            }
+            Assert(runs[0].Selected.AutomaticPlan.Plan.Selected.Plan.Ticks ==
+                   runs[1].Selected.AutomaticPlan.Plan.Selected.Plan.Ticks,
+                "재배치안 결과가 재현되지 않음");
         }
 
         private static EmergencyAccessRouteGenerationOptionsV2 ComplexOptions()

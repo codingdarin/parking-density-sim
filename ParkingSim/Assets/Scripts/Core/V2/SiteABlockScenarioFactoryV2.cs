@@ -5,6 +5,19 @@ using System.Linq;
 namespace ParkingSim.Core.V2
 {
     /// <summary>
+    /// 단지 A 적치 배치안 — S4b 반사실 실험용.
+    /// SouthWestOnly = 실측 근사 기준선(남측 진입부 12면 편중).
+    /// Redistributed = 총 면수 12를 유지한 채 남측 6 + 동측 6으로 분산(순수 배치 효과).
+    /// Extended = 남측 12 + 동측 6 = 18면(배치 + 용량 효과).
+    /// </summary>
+    public enum SiteStagingLayoutV2 : byte
+    {
+        SouthWestOnly,
+        Redistributed,
+        Extended,
+    }
+
+    /// <summary>
     /// 실제 단지 A(익명화) 발췌 블록 — 1970년대 준공 강남 소재 대단지의 정형 판상 구간.
     /// 공개 자료 근거: 총 28동·지상 14층·4,424세대·대지 237,900㎡·주차 5,000대
     /// (세대당 1.13대)·지하주차장 부재·이중주차 일상·소방차 진입 지연 실사례 보도.
@@ -53,7 +66,8 @@ namespace ParkingSim.Core.V2
 
         public static ApartmentComplexScenarioV2 BuildDensity(
             int blockingVehicleCount,
-            OperationTimingV2 timing = null)
+            OperationTimingV2 timing = null,
+            SiteStagingLayoutV2 stagingLayout = SiteStagingLayoutV2.SouthWestOnly)
         {
             if (blockingVehicleCount < 0 ||
                 blockingVehicleCount > MaximumBlockingVehicles)
@@ -104,9 +118,17 @@ namespace ParkingSim.Core.V2
             }
             int backgroundSlotCount = slots.Count - variableSlotCount;
 
-            // ── 적치 12면: 남측 진입부 비주차 포장 (y0 연석) ──
-            foreach (int x in Enumerable.Range(0, 12).Select(index => 4 + index * 2))
+            // ── 적치면: 배치안별 구성 (남측 y0 연석 = 진입광장 비주차 포장,
+            //    동측 x59 연석 = 반사실 가정의 동측 유휴 포장) ──
+            int southStagingCount =
+                stagingLayout == SiteStagingLayoutV2.Redistributed ? 6 : 12;
+            foreach (int x in Enumerable.Range(0, southStagingCount)
+                         .Select(index => 4 + index * 2))
                 AddSlot(slots, SlotKind.Staging, x, 0);
+            if (stagingLayout != SiteStagingLayoutV2.SouthWestOnly)
+                foreach (int y in new[] { 3, 5, 7, 14, 16, 18 })
+                    AddSlot(slots, SlotKind.Staging, 59, y,
+                        VehicleOrientation.Vertical);
 
             // 초기 점유 = 가변 N + 배경 만차 전량
             IEnumerable<int> occupied = Enumerable.Range(0, blockingVehicleCount)
