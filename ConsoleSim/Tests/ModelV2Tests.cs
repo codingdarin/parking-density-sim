@@ -8,7 +8,7 @@ namespace ParkingSim.Tests
 {
     public static class ModelV2Tests
     {
-        public const int ExpectedGateCount = 72;
+        public const int ExpectedGateCount = 74;
 
         public static int RunAll()
         {
@@ -85,6 +85,8 @@ namespace ParkingSim.Tests
             passed += Run("70 핸드오버 조립 — 잔여 계획 유효·시간 합성", TestHandoverComposition);
             passed += Run("71 핸드오버 교체 — 충전소 출발 유닛 합류", TestHandoverReplacement);
             passed += Run("72 핸드오버 재현성 — 동일 입력 동일 결과", TestHandoverReproducibility);
+            passed += Run("73 단지A 기하 — 만차 배경·전용구역·밀도 보존", TestSiteAGeometry);
+            passed += Run("74 단지A 평가 — 배경 주차열 이동 필수·재현", TestSiteAEvaluation);
             Console.WriteLine(
                 $"\nV2 타당성 게이트 {passed}/{ExpectedGateCount} 통과");
             return passed;
@@ -1900,6 +1902,79 @@ namespace ParkingSim.Tests
                    first.TotalTicks == second.TotalTicks &&
                    first.ResidualPlan.Ticks == second.ResidualPlan.Ticks,
                 "같은 입력의 핸드오버 결과가 재현되지 않음");
+        }
+
+        private static void TestSiteAGeometry()
+        {
+            ApartmentComplexScenarioV2 empty =
+                SiteABlockScenarioFactoryV2.BuildDensity(0);
+            ApartmentComplexScenarioV2 full =
+                SiteABlockScenarioFactoryV2.BuildDensity(
+                    SiteABlockScenarioFactoryV2.MaximumBlockingVehicles);
+            Assert(empty.Buildings.Count == SiteABlockScenarioFactoryV2.BuildingCount &&
+                   empty.BaseProblem.Slots.Count == full.BaseProblem.Slots.Count,
+                "단지A 동 수 또는 슬롯 구성이 밀도에 따라 변함");
+            int background = empty.BaseProblem.VehicleCount;
+            Assert(background > 0 &&
+                   full.BaseProblem.VehicleCount ==
+                   background + SiteABlockScenarioFactoryV2.MaximumBlockingVehicles,
+                "만차 배경 + 가변 N 초기 점유 구성이 어긋남");
+            Assert(empty.BaseProblem.StagingCapacity == 12,
+                "적치 12면 구성이 어긋남");
+            var slotCells = new HashSet<(int X, int Y)>();
+            foreach (ParkingSlotV2 slot in full.BaseProblem.Slots)
+            {
+                slotCells.Add((slot.Pose.X, slot.Pose.Y));
+                slotCells.Add(slot.Pose.SecondCell);
+            }
+            foreach (ApartmentBuildingV2 building in full.Buildings)
+            {
+                foreach ((int x, int y) in building.FireEngineZone.Cells)
+                {
+                    Assert(full.BaseProblem.IsFloor(x, y),
+                        "단지A 전용구역 셀이 floor 밖임");
+                    Assert(!slotCells.Contains((x, y)),
+                        "단지A 전용구역 셀을 주차 슬롯이 점유함");
+                }
+                foreach ((int x, int y) in building.FootprintCells)
+                    Assert(!full.BaseProblem.IsFloor(x, y),
+                        "단지A 건물 풋프린트가 주행 가능 floor임");
+            }
+            foreach (ApartmentComplexEntranceV2 entrance in full.Entrances)
+                Assert(full.BaseProblem.IsFloor(entrance.Cell.X, entrance.Cell.Y),
+                    "단지A 진입구가 floor 밖임");
+        }
+
+        private static void TestSiteAEvaluation()
+        {
+            ApartmentComplexScenarioV2 scenario =
+                SiteABlockScenarioFactoryV2.BuildDensity(0);
+            EmergencyAccessRouteGenerationOptionsV2 options = ComplexOptions();
+            ApartmentComplexPlanResultV2[] runs = new ApartmentComplexPlanResultV2[2];
+            for (int attempt = 0; attempt < runs.Length; attempt++)
+            {
+                runs[attempt] = ApartmentComplexEmergencyPlannerV2.Solve(
+                    scenario,
+                    new ApartmentFireIncidentV2(1),
+                    includeSecondaryEntrances: false,
+                    activeRobotCount: 4,
+                    generationOptions: options,
+                    maxTick: 2000);
+                Assert(runs[attempt].Success,
+                    "단지A 1동 개통 실패: " + runs[attempt].FailReason);
+            }
+            EmergencyAccessCandidateResultV2 selected =
+                runs[0].Selected.AutomaticPlan.Plan.Selected;
+            // 골목 도로 2셀(5m) < 폭3(7.5m) — 이중주차 0대여도 연석 주차열의
+            // 관리 차량 이동 없이는 개통이 불가능해야 한다 (단지A 기하의 핵심).
+            Assert(selected.Scenario.SelectedVehicleCount >= 1 &&
+                   selected.Plan.Ticks > 0,
+                "이중주차 0대에서 배경 주차열 이동 없이 개통됨 — 기하 의도와 다름");
+            Assert(runs[0].Selected.AutomaticPlan.Plan.Selected.Plan.Ticks ==
+                   runs[1].Selected.AutomaticPlan.Plan.Selected.Plan.Ticks &&
+                   runs[0].Selected.AutomaticPlan.Plan.Selected.Route.Name ==
+                   runs[1].Selected.AutomaticPlan.Plan.Selected.Route.Name,
+                "단지A 평가가 재현되지 않음");
         }
 
         private static EmergencyAccessRouteGenerationOptionsV2 ComplexOptions()
