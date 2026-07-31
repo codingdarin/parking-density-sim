@@ -379,8 +379,12 @@ namespace ParkingSim.Runtime
                     for (int pairIndex = 0; pairIndex < 2; pairIndex++)
                     {
                         float pivotX = pairIndex == 0 ? -0.065f : 0.065f;
-                        float restYaw = pairIndex == 0 ? 180f : 0f;
+                        // 휠 클램핑 부채: 휴지 시 바퀴 중심 기준 앞뒤 ±55° V자로
+                        // 펴져 있고, 리프트 시 부채 접듯 오므라들어 두 팔이
+                        // 타이어 앞뒤 접지면 밑 횡방향 평행으로 모인다.
                         float liftYaw = side > 0f ? -90f : 90f;
+                        float restYaw = liftYaw +
+                            (pairIndex == 0 ? -1f : 1f) * side * 55f;
                         var pivot = new GameObject(
                             moduleName + "-" + sideName + "-Hinge-" +
                             (pairIndex == 0 ? "Rear" : "Front"));
