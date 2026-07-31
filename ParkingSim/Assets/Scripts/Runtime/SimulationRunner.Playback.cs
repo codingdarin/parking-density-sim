@@ -36,8 +36,29 @@ namespace ParkingSim.Runtime
                 VehiclePose servicePose;
                 if (TryGetRobotServicePose(robot, timelineTick, out servicePose))
                 {
-                    _robotViews[robot].transform.position =
-                        RobotPosition(servicePose, _robotUsesCustomView[robot]);
+                    // 서비스 위치(1×2 pose 중심)로 하드 스냅하면 접근 셀(앵커)과
+                    // 최대 반 셀 차이가 점프로 보인다. 취득 초반에는 차 밑으로
+                    // 미끄러져 들어가고, 해제 말미에는 빠져나오도록 블렌딩한다.
+                    float serviceProgress;
+                    int servicePhase = ServicePhase(
+                        robot, timelineTick, out serviceProgress);
+                    float blend = 1f;
+                    if (servicePhase == 1)
+                        blend = Mathf.SmoothStep(
+                            0f, 1f, Mathf.Clamp01(serviceProgress / 0.15f));
+                    else if (servicePhase == 2)
+                        blend = 1f - Mathf.SmoothStep(
+                            0f,
+                            1f,
+                            Mathf.Clamp01((serviceProgress - 0.85f) / 0.15f));
+                    Vector3 naturalPosition = Vector3.Lerp(
+                        RobotPosition(a, _robotUsesCustomView[robot]),
+                        RobotPosition(b, _robotUsesCustomView[robot]),
+                        fraction);
+                    _robotViews[robot].transform.position = Vector3.Lerp(
+                        naturalPosition,
+                        RobotPosition(servicePose, _robotUsesCustomView[robot]),
+                        blend);
                     _robotViews[robot].transform.rotation =
                         SmoothRobotRotation(
                             _robotViews[robot].transform.rotation,
