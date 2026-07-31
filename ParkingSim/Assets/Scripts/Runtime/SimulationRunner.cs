@@ -364,6 +364,13 @@ namespace ParkingSim.Runtime
             if (TransportCameraKeyPressed(out transportCamera))
                 SelectTransportCamera(transportCamera);
             if (PauseTogglePressed()) _paused = !_paused;
+            if (ModeTogglePressed())
+            {
+                _visualMode = _visualMode == SimulationVisualMode.Control
+                    ? SimulationVisualMode.ThreeDimensional
+                    : SimulationVisualMode.Control;
+                ApplyVisualMode();
+            }
             if (ReplayPressed())
             {
                 _time = 0f;
