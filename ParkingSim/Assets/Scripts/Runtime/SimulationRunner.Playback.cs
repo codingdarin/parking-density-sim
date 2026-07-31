@@ -265,6 +265,8 @@ namespace ParkingSim.Runtime
             bool carrying = StateAt(
                 _plan.RobotTimelines[robot],
                 stateTick).Carrying;
+            // 취득: 부채 접힘은 0~85%로 길게(천천히), 상승은 기존 42~100% 유지 —
+            // 접히면서 함께 들리는 동작. 해제는 역순 미러.
             float armAmount;
             float deckAmount;
             if (phase == 1)
@@ -272,7 +274,7 @@ namespace ParkingSim.Runtime
                 armAmount = Mathf.SmoothStep(
                     0f,
                     1f,
-                    Mathf.Clamp01(progress / 0.58f));
+                    Mathf.Clamp01(progress / 0.85f));
                 deckAmount = Mathf.SmoothStep(
                     0f,
                     1f,
@@ -287,7 +289,7 @@ namespace ParkingSim.Runtime
                 armAmount = 1f - Mathf.SmoothStep(
                     0f,
                     1f,
-                    Mathf.Clamp01((progress - 0.42f) / 0.58f));
+                    Mathf.Clamp01((progress - 0.15f) / 0.85f));
             }
             else
             {
@@ -300,10 +302,10 @@ namespace ParkingSim.Runtime
             float spreadAmount;
             if (phase == 1)
                 spreadAmount = Mathf.SmoothStep(
-                    0f, 1f, Mathf.Clamp01(progress / 0.42f));
+                    0f, 1f, Mathf.Clamp01(progress / 0.25f));
             else if (phase == 2)
                 spreadAmount = 1f - Mathf.SmoothStep(
-                    0f, 1f, Mathf.Clamp01((progress - 0.58f) / 0.42f));
+                    0f, 1f, Mathf.Clamp01((progress - 0.75f) / 0.25f));
             else
                 spreadAmount = carrying ? 1f : 0f;
             if (liftVisual.AxleModules != null)
