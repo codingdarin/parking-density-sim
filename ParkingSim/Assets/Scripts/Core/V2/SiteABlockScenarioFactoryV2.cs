@@ -18,6 +18,20 @@ namespace ParkingSim.Core.V2
     }
 
     /// <summary>
+    /// 단지 A 전용구역 배치안 — S4c 반사실 실험용.
+    /// AlleyFrontage = 실측 근사 기준선(동 전면 골목 도로변 — 폭2 골목이라 접근이
+    /// 항상 연석열 인출을 요구, S4b가 특정한 직렬화 병목의 원인).
+    /// ArterialFrontage = 재지정안(전용구역을 중앙 종축 간선(10m)변 2×5셀로 —
+    /// 폭3 경로가 골목을 지나지 않는 처방. 전용구역 전면 주차금지에 따라
+    /// 종축 이중주차 4면이 제외되어 가변 최대 12면).
+    /// </summary>
+    public enum SiteZonePlacementV2 : byte
+    {
+        AlleyFrontage,
+        ArterialFrontage,
+    }
+
+    /// <summary>
     /// 실제 단지 A(익명화) 발췌 블록 — 1970년대 준공 강남 소재 대단지의 정형 판상 구간.
     /// 공개 자료 근거: 총 28동·지상 14층·4,424세대·대지 237,900㎡·주차 5,000대
     /// (세대당 1.13대)·지하주차장 부재·이중주차 일상·소방차 진입 지연 실사례 보도.
@@ -64,13 +78,20 @@ namespace ParkingSim.Core.V2
             return BuildDensity(MaximumBlockingVehicles, timing);
         }
 
+        /// <summary>배치안별 가변 이중주차 최대 면수</summary>
+        public static int MaximumVariableSlots(SiteZonePlacementV2 zonePlacement)
+        {
+            return zonePlacement == SiteZonePlacementV2.ArterialFrontage ? 12 : 16;
+        }
+
         public static ApartmentComplexScenarioV2 BuildDensity(
             int blockingVehicleCount,
             OperationTimingV2 timing = null,
-            SiteStagingLayoutV2 stagingLayout = SiteStagingLayoutV2.SouthWestOnly)
+            SiteStagingLayoutV2 stagingLayout = SiteStagingLayoutV2.SouthWestOnly,
+            SiteZonePlacementV2 zonePlacement = SiteZonePlacementV2.AlleyFrontage)
         {
             if (blockingVehicleCount < 0 ||
-                blockingVehicleCount > MaximumBlockingVehicles)
+                blockingVehicleCount > MaximumVariableSlots(zonePlacement))
                 throw new ArgumentOutOfRangeException(nameof(blockingVehicleCount));
 
             bool[,] floor = new bool[Width, Height];
@@ -81,20 +102,36 @@ namespace ParkingSim.Core.V2
             Fill(floor, CentralMinX, CentralMaxX, 0, 21);          // 중앙 종축
             Fill(floor, 56, 59, 0, 21);                            // 동측 도로
 
-            // 동 4개 — 전용구역은 각 동 전면 회랑 도로(폭5×2셀), 항상 비점유
-            var buildings = new List<ApartmentBuildingV2>
-            {
-                CreateBuilding(1, ColAMinX, ColAMaxX, Row1MinY, Row1MaxY, 15, CorridorRoadMinY),
-                CreateBuilding(2, ColBMinX, ColBMaxX, Row1MinY, Row1MaxY, 43, CorridorRoadMinY),
-                CreateBuilding(3, ColAMinX, ColAMaxX, Row2MinY, Row2MaxY, 8, CorridorRoadMaxY),
-                CreateBuilding(4, ColBMinX, ColBMaxX, Row2MinY, Row2MaxY, 36, CorridorRoadMaxY),
-            };
+            // 동 4개 — 전용구역: 기준선은 동 전면 골목 도로(폭5×2셀),
+            // 재지정안은 중앙 종축 간선변(2×5셀). 항상 비점유.
+            var buildings = zonePlacement == SiteZonePlacementV2.AlleyFrontage
+                ? new List<ApartmentBuildingV2>
+                {
+                    CreateBuilding(1, ColAMinX, ColAMaxX, Row1MinY, Row1MaxY, 15, CorridorRoadMinY),
+                    CreateBuilding(2, ColBMinX, ColBMaxX, Row1MinY, Row1MaxY, 43, CorridorRoadMinY),
+                    CreateBuilding(3, ColAMinX, ColAMaxX, Row2MinY, Row2MaxY, 8, CorridorRoadMaxY),
+                    CreateBuilding(4, ColBMinX, ColBMaxX, Row2MinY, Row2MaxY, 36, CorridorRoadMaxY),
+                }
+                : new List<ApartmentBuildingV2>
+                {
+                    CreateArterialBuilding(1, ColAMinX, ColAMaxX, Row1MinY, Row1MaxY,
+                        CentralMinX, CentralMinX + 1, CentralMinX + 1),
+                    CreateArterialBuilding(2, ColBMinX, ColBMaxX, Row1MinY, Row1MaxY,
+                        CentralMaxX - 1, CentralMaxX, CentralMaxX - 1),
+                    CreateArterialBuilding(3, ColAMinX, ColAMaxX, Row2MinY, Row2MaxY,
+                        CentralMinX, CentralMinX + 1, CentralMinX + 1),
+                    CreateArterialBuilding(4, ColBMinX, ColBMaxX, Row2MinY, Row2MaxY,
+                        CentralMaxX - 1, CentralMaxX, CentralMaxX - 1),
+                };
 
             var slots = new List<ParkingSlotV2>();
-            // ── 가변 이중주차 16면 (슬롯 0..15, 누적 순서 = 목록 순서) ──
-            // 중앙 종축 연석(x29) 평행 4 → 골목 연석(y10/y11) 평행 8 → 서측 진입로(x1) 4
-            foreach (int y in new[] { 4, 6, 15, 17 })
-                AddSlot(slots, SlotKind.Blocking, 29, y, VehicleOrientation.Vertical);
+            // ── 가변 이중주차 (누적 순서 = 목록 순서) ──
+            // 기준선: 중앙 종축 연석(x29) 평행 4 → 골목 연석(y10/y11) 평행 8 →
+            // 서측 진입로(x1) 4 = 16면. 재지정안: 종축 4면은 전용구역 전면
+            // 주차금지로 제외 = 12면.
+            if (zonePlacement == SiteZonePlacementV2.AlleyFrontage)
+                foreach (int y in new[] { 4, 6, 15, 17 })
+                    AddSlot(slots, SlotKind.Blocking, 29, y, VehicleOrientation.Vertical);
             foreach (int x in new[] { 20, 24, 48, 52 })
                 AddSlot(slots, SlotKind.Blocking, x, CorridorRoadMinY);
             foreach (int x in new[] { 19, 23, 47, 51 })
@@ -162,6 +199,35 @@ namespace ParkingSim.Core.V2
         {
             for (int x = ColAMinX; x <= ColAMaxX; x += 2) yield return x;
             for (int x = ColBMinX; x <= ColBMaxX; x += 2) yield return x;
+        }
+
+        /// <summary>재지정안 전용구역 — 중앙 종축 간선변 2×5셀, 동 측면 높이와 정렬</summary>
+        private static ApartmentBuildingV2 CreateArterialBuilding(
+            int id,
+            int minX,
+            int maxX,
+            int minY,
+            int maxY,
+            int zoneMinX,
+            int zoneMaxX,
+            int approachX)
+        {
+            var footprint = new List<(int X, int Y)>();
+            for (int x = minX; x <= maxX; x++)
+                for (int y = minY; y <= maxY; y++)
+                    footprint.Add((x, y));
+            var zoneCells = new List<(int X, int Y)>();
+            for (int x = zoneMinX; x <= zoneMaxX; x++)
+                for (int y = minY; y <= maxY; y++)
+                    zoneCells.Add((x, y));
+            int approachY = (minY + maxY) / 2;
+            var zone = new FireEngineZoneV2(
+                "site-a-arterial-zone-" + id,
+                id,
+                ApartmentFacadeV2.CentralRoad,
+                (approachX, approachY),
+                zoneCells);
+            return new ApartmentBuildingV2(id, footprint, zone);
         }
 
         private static ApartmentBuildingV2 CreateBuilding(
