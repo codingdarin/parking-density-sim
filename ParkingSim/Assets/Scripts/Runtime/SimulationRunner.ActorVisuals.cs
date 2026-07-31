@@ -45,51 +45,64 @@ namespace ParkingSim.Runtime
             }
         }
 
+        private static Mesh _plumbobMesh;
+
+        /// <summary>아래로 뾰족한 8면체(플럼밥) — 대상 차량 상공 부유 마커용</summary>
+        private static Mesh PlumbobMesh()
+        {
+            if (_plumbobMesh != null) return _plumbobMesh;
+            Vector3 top = new Vector3(0f, 0.20f, 0f);
+            Vector3 bottom = new Vector3(0f, -0.30f, 0f);
+            Vector3[] ring =
+            {
+                new Vector3(0.15f, 0f, 0f),
+                new Vector3(0f, 0f, 0.15f),
+                new Vector3(-0.15f, 0f, 0f),
+                new Vector3(0f, 0f, -0.15f),
+            };
+            var vertices = new List<Vector3>();
+            var triangles = new List<int>();
+            for (int index = 0; index < 4; index++)
+            {
+                int next = (index + 1) % 4;
+                // 평평한 면 셰이딩을 위해 삼각형마다 정점을 복제한다
+                triangles.Add(vertices.Count); vertices.Add(top);
+                triangles.Add(vertices.Count); vertices.Add(ring[next]);
+                triangles.Add(vertices.Count); vertices.Add(ring[index]);
+                triangles.Add(vertices.Count); vertices.Add(bottom);
+                triangles.Add(vertices.Count); vertices.Add(ring[index]);
+                triangles.Add(vertices.Count); vertices.Add(ring[next]);
+            }
+            var mesh = new Mesh { name = "Plumbob" };
+            mesh.SetVertices(vertices);
+            mesh.SetTriangles(triangles, 0);
+            mesh.RecalculateNormals();
+            mesh.RecalculateBounds();
+            _plumbobMesh = mesh;
+            return mesh;
+        }
+
         private GameObject BuildVehicleTrackingFrame(
             int vehicle,
             VehiclePose pose)
         {
-            var frame = new GameObject(
-                "MoveTargetFrame-" + (vehicle + 1));
-            Track(frame, SimulationVisualLayer.ThreeDimensional);
-            LineRenderer line = frame.AddComponent<LineRenderer>();
-            line.useWorldSpace = false;
-            line.loop = false;
-            line.positionCount = 16;
-            line.startWidth = 0.026f;
-            line.endWidth = 0.026f;
-            line.numCornerVertices = 2;
-            line.numCapVertices = 2;
-            line.material = CreateTrackingLineMaterial();
-            float x = 0.98f;
-            float z = 0.48f;
-            float bottom = -0.29f;
-            float top = 0.42f;
-            line.SetPositions(new[]
-            {
-                new Vector3(-x, bottom, -z),
-                new Vector3(x, bottom, -z),
-                new Vector3(x, bottom, z),
-                new Vector3(-x, bottom, z),
-                new Vector3(-x, bottom, -z),
-                new Vector3(-x, top, -z),
-                new Vector3(x, top, -z),
-                new Vector3(x, bottom, -z),
-                new Vector3(x, top, -z),
-                new Vector3(x, top, z),
-                new Vector3(x, bottom, z),
-                new Vector3(x, top, z),
-                new Vector3(-x, top, z),
-                new Vector3(-x, bottom, z),
-                new Vector3(-x, top, z),
-                new Vector3(-x, top, -z),
-            });
-            frame.transform.position = VehiclePosition(pose, false, false);
-            frame.transform.rotation = VehicleRotation(pose);
+            var marker = new GameObject(
+                "MoveTargetMarker-" + (vehicle + 1));
+            Track(marker, SimulationVisualLayer.ThreeDimensional);
+            var gem = new GameObject("Plumbob");
+            gem.transform.SetParent(marker.transform, worldPositionStays: false);
+            MeshFilter filter = gem.AddComponent<MeshFilter>();
+            filter.sharedMesh = PlumbobMesh();
+            MeshRenderer renderer = gem.AddComponent<MeshRenderer>();
+            renderer.material = CreateTrackingLineMaterial();
+            renderer.shadowCastingMode =
+                UnityEngine.Rendering.ShadowCastingMode.Off;
+            renderer.receiveShadows = false;
+            marker.transform.position = VehiclePosition(pose, false, false);
             SetTrackingFrameColor(
-                frame,
+                marker,
                 new Color(1f, 0.48f, 0.04f));
-            return frame;
+            return marker;
         }
 
         private void BuildControlMovableVehicleMarker(

@@ -94,6 +94,19 @@ namespace ParkingSim.Runtime
 #endif
         }
 
+        /// <summary>` (백틱) — 관제모드/3D모드 토글</summary>
+        private static bool ModeTogglePressed()
+        {
+#if ENABLE_INPUT_SYSTEM
+            return Keyboard.current != null &&
+                   Keyboard.current.backquoteKey.wasPressedThisFrame;
+#elif ENABLE_LEGACY_INPUT_MANAGER
+            return Input.GetKeyDown(KeyCode.BackQuote);
+#else
+            return false;
+#endif
+        }
+
         private static bool ReplayPressed()
         {
 #if ENABLE_INPUT_SYSTEM

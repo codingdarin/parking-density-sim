@@ -215,10 +215,20 @@ namespace ParkingSim.Runtime
             Color color)
         {
             LineRenderer line = frame.GetComponent<LineRenderer>();
-            if (line == null) return;
-            line.startColor = color;
-            line.endColor = color;
-            Material material = line.material;
+            if (line != null)
+            {
+                line.startColor = color;
+                line.endColor = color;
+                ApplyMaterialColor(line.material, color);
+                return;
+            }
+            MeshRenderer renderer = frame.GetComponentInChildren<MeshRenderer>();
+            if (renderer == null) return;
+            ApplyMaterialColor(renderer.material, color);
+        }
+
+        private static void ApplyMaterialColor(Material material, Color color)
+        {
             material.color = color;
             if (material.HasProperty("_BaseColor"))
                 material.SetColor("_BaseColor", color);

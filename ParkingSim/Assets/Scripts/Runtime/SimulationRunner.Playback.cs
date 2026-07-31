@@ -103,8 +103,11 @@ namespace ParkingSim.Runtime
                 GameObject frame;
                 if (_carTrackingFrames.TryGetValue(vehicle, out frame))
                 {
-                    frame.transform.position = position;
-                    frame.transform.rotation = view.transform.rotation;
+                    // 플럼밥: 차량 상공에서 천천히 회전·부유
+                    frame.transform.position = position + Vector3.up *
+                        (1.05f + Mathf.Sin(Time.time * 2.4f + vehicle) * 0.05f);
+                    frame.transform.rotation = Quaternion.Euler(
+                        0f, Time.time * 110f + vehicle * 40f, 0f);
                     SetTrackingFrameColor(
                         frame,
                         a.Carried || b.Carried
