@@ -45,6 +45,11 @@ namespace ParkingSim.Core.V2
         public int DelayTicks { get; set; }
         public int[] ConsumedTicks { get; set; }
         public int[] RemainingTicks { get; set; }
+        /// <summary>정차(퇴역·비활성) 유닛 때문에 통행 불가로 봉쇄된 셀</summary>
+        public IReadOnlyList<(int X, int Y)> ParkedUnitCells { get; set; }
+            = Array.Empty<(int X, int Y)>();
+        /// <summary>정차 유닛이 하부에 있어 고정 차량 대신 전체 봉쇄로 전환된 인도 pose 수</summary>
+        public int ConvertedStagingPoseCount { get; set; }
     }
 
     /// <summary>
@@ -191,58 +196,84 @@ namespace ParkingSim.Core.V2
                     slots.Count, SlotKind.Staging, problem.Slots[index].Pose));
             }
 
-            // 인도 완료 차량 = 적치 pose의 고정 차량
-            var fixedPoses = new List<VehiclePose>(problem.FixedVehiclePoses);
-            foreach (int stagingIndex in usedStaging)
-                fixedPoses.Add(problem.Slots[stagingIndex].Pose);
-            var fixedCells = new HashSet<(int X, int Y)>();
-            foreach (VehiclePose pose in fixedPoses)
-            {
-                fixedCells.Add((pose.X, pose.Y));
-                fixedCells.Add(pose.SecondCell);
-            }
+            List<VehiclePose> deliveredPoses = halted
+                .Select(mission => mission.DestinationSlot)
+                .Distinct()
+                .OrderBy(stagingIndex => stagingIndex)
+                .Select(stagingIndex => problem.Slots[stagingIndex].Pose)
+                .ToList();
 
             // 유닛 정지 위치 = 자기 "마지막 완결 미션"의 하차 시점 위치.
             // 원 계획의 t_sync 시점 위치를 쓰면 취소된 미션의 주행이 섞이므로 부정확.
-            var starts = new List<(int X, int Y)>();
+            var available = new List<(int X, int Y)>();
             for (int robot = 0; robot < robotCount; robot++)
             {
                 if (robot == result.RetiredRobot) continue;
-                starts.Add(RestPosition(plan, problem, robot, halted));
+                available.Add(RestPosition(plan, problem, robot, halted));
             }
-            if (replacementStart.HasValue) starts.Add(replacementStart.Value);
-            if (starts.Count == 0)
+            if (replacementStart.HasValue) available.Add(replacementStart.Value);
+            if (available.Count == 0)
             {
                 result.FailReason = "핸드오버 후 가용 유닛이 없음";
                 return;
             }
-            if (starts.Distinct().Count() != starts.Count)
+            if (available.Distinct().Count() != available.Count)
             {
                 result.FailReason = "교체 유닛 시작점이 생존 유닛 위치와 겹침";
                 return;
             }
-            // 재배치 규칙 9: 필요한 조만 활성화. 잔여 차량보다 많은 유닛을 세우면
-            // 유휴 활성 유닛이 인도 차량 밑 정지 위치에서 잔여 동선과 충돌한다.
-            // 비활성 유닛은 도크/차량 하부 정차로 간주하며 그 간섭은 모델 밖(한계).
-            if (starts.Count > remaining)
-                starts.RemoveRange(remaining, starts.Count - remaining);
-
-            // 퇴역 유닛 정지 위치: ① 인도 차량(고정 pose) 밑이면 추가 조치 불요(저상형)
-            // ② 자기 차고(시작점)면 도크 정차로 간주해 통행 방해 없음(시작점은 상호
-            // 배타 도크) ③ 그 외 노상이면 해당 셀을 봉쇄해 잔여 계획이 통과하지 못하게 한다.
-            bool[,] floor = problem.CopyFloor();
-            (int X, int Y) rest =
-                RestPosition(plan, problem, result.RetiredRobot, halted);
-            bool atHomeDock = rest == problem.RobotStarts[result.RetiredRobot];
-            if (!fixedCells.Contains(rest) && !atHomeDock)
+            // 재배치 규칙 9: 필요한 조만 활성화. 활성에서 제외된 유닛은 퇴역 유닛과
+            // 함께 "정차 유닛"으로 다뤄 정지 셀을 통행 불가로 반영한다.
+            int activeCount = Math.Min(available.Count, remaining);
+            List<(int X, int Y)> starts = available.Take(activeCount).ToList();
+            var parkedCells = new List<(int X, int Y)>
             {
-                if (starts.Contains(rest))
+                RestPosition(plan, problem, result.RetiredRobot, halted),
+            };
+            parkedCells.AddRange(available.Skip(activeCount));
+
+            // 정차 유닛 간섭 반영: ① 인도 차량 밑 정차 = 해당 pose를 고정 차량 대신
+            // 전체 floor 봉쇄로 전환(차량+하부 유닛 = 빈 유닛 통과도 불가)
+            // ② 차고·노상 정차 = 해당 셀 봉쇄. 활성 시작점과 겹치면 명시 실패.
+            bool[,] floor = problem.CopyFloor();
+            var convertedPoses = new HashSet<int>();
+            var blockedCells = new HashSet<(int X, int Y)>();
+            foreach ((int X, int Y) parked in parkedCells)
+            {
+                int underPose = deliveredPoses.FindIndex(pose =>
+                    (pose.X, pose.Y) == parked || pose.SecondCell == parked);
+                if (underPose >= 0)
                 {
-                    result.FailReason = "퇴역 유닛 정지 셀이 가용 유닛 시작점과 겹침";
+                    if (convertedPoses.Add(underPose))
+                    {
+                        VehiclePose pose = deliveredPoses[underPose];
+                        blockedCells.Add((pose.X, pose.Y));
+                        blockedCells.Add(pose.SecondCell);
+                    }
+                }
+                else
+                {
+                    blockedCells.Add(parked);
+                }
+            }
+            foreach ((int X, int Y) cell in blockedCells)
+            {
+                if (starts.Contains(cell))
+                {
+                    result.FailReason =
+                        "정차 유닛(또는 그 차량) 셀이 가용 유닛 시작점과 겹침";
                     return;
                 }
-                floor[rest.X, rest.Y] = false;
+                floor[cell.X, cell.Y] = false;
             }
+            result.ParkedUnitCells = blockedCells.ToList();
+            result.ConvertedStagingPoseCount = convertedPoses.Count;
+
+            // 인도 완료 차량: 정차 유닛이 밑에 없는 pose만 고정 차량으로 남긴다
+            var fixedPoses = new List<VehiclePose>(problem.FixedVehiclePoses);
+            for (int index = 0; index < deliveredPoses.Count; index++)
+                if (!convertedPoses.Contains(index))
+                    fixedPoses.Add(deliveredPoses[index]);
 
             EmergencyProblemV2 residual;
             try
