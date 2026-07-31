@@ -48,7 +48,14 @@ namespace ParkingSim.Runtime
             public Transform[] ArmPivots;
             public Quaternion[] ArmRestRotations;
             public Quaternion[] ArmLiftRotations;
+            /// <summary>[0]=후방, [1]=전방 축거 모듈 — 유휴 밀착·도킹 전개 애니메이션용</summary>
+            public Transform[] AxleModules;
         }
+
+        /// <summary>유휴·빈 주행 시 모듈 중심 간격 — 전장이 1셀(2.5m)을 넘지 않게 밀착</summary>
+        private const float IdleModuleOffsetX = 0.22f;
+        /// <summary>차량 축거 도킹 시 모듈 중심 간격 (기존 상시 값)</summary>
+        private const float DockedModuleOffsetX = 0.54f;
 
         private EmergencyProblemV2 _problem;
         private PipelinedPlanResultV2 _plan;

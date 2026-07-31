@@ -295,6 +295,31 @@ namespace ParkingSim.Runtime
                 deckAmount = carrying ? 1f : 0f;
             }
 
+            // 모듈 전개: 유휴·빈 주행은 밀착(전장 ≤ 1셀 — 인접 대기 유닛과 비겹침),
+            // 취득 서비스 전반부에 축거 간격으로 전개, 운반 중 유지, 해제 후 재밀착
+            float spreadAmount;
+            if (phase == 1)
+                spreadAmount = Mathf.SmoothStep(
+                    0f, 1f, Mathf.Clamp01(progress / 0.42f));
+            else if (phase == 2)
+                spreadAmount = 1f - Mathf.SmoothStep(
+                    0f, 1f, Mathf.Clamp01((progress - 0.58f) / 0.42f));
+            else
+                spreadAmount = carrying ? 1f : 0f;
+            if (liftVisual.AxleModules != null)
+            {
+                float offset = Mathf.Lerp(
+                    IdleModuleOffsetX, DockedModuleOffsetX, spreadAmount);
+                for (int index = 0; index < liftVisual.AxleModules.Length; index++)
+                {
+                    if (liftVisual.AxleModules[index] == null) continue;
+                    float direction = index == 0 ? -1f : 1f;
+                    Vector3 local = liftVisual.AxleModules[index].localPosition;
+                    liftVisual.AxleModules[index].localPosition =
+                        new Vector3(direction * offset, local.y, local.z);
+                }
+            }
+
             for (int index = 0; index < liftVisual.Decks.Length; index++)
             {
                 liftVisual.Decks[index].localPosition =

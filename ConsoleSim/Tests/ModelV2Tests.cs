@@ -8,7 +8,7 @@ namespace ParkingSim.Tests
 {
     public static class ModelV2Tests
     {
-        public const int ExpectedGateCount = 75;
+        public const int ExpectedGateCount = 76;
 
         public static int RunAll()
         {
@@ -85,6 +85,7 @@ namespace ParkingSim.Tests
             passed += Run("70 핸드오버 조립 — 잔여 계획 유효·시간 합성", TestHandoverComposition);
             passed += Run("71 핸드오버 교체 — 충전소 출발 유닛 합류", TestHandoverReplacement);
             passed += Run("72 핸드오버 재현성 — 동일 입력 동일 결과", TestHandoverReproducibility);
+            passed += Run("76 핸드오버 정차 간섭 — 정차 유닛 셀 통행 불가", TestHandoverParkedInterference);
             passed += Run("73 단지A 기하 — 만차 배경·전용구역·밀도 보존", TestSiteAGeometry);
             passed += Run("74 단지A 평가 — 배경 주차열 이동 필수·재현", TestSiteAEvaluation);
             passed += Run("75 단지A 적치 반사실 — 재배치·확장 기하와 재현", TestSiteAStagingCounterfactual);
@@ -1827,8 +1828,9 @@ namespace ParkingSim.Tests
                    problem.StagingCapacity - result.DeliveredVehicles.Count,
                 "잔여 적치 용량이 인도 수만큼 줄지 않음");
             Assert(residual.FixedVehiclePoses.Count ==
-                   problem.FixedVehiclePoses.Count + result.DeliveredVehicles.Count,
-                "인도 완료 차량이 고정 차량으로 전환되지 않음");
+                   problem.FixedVehiclePoses.Count + result.DeliveredVehicles.Count -
+                   result.ConvertedStagingPoseCount,
+                "인도 완료 차량의 고정/봉쇄 전환 회계가 어긋남");
             Assert(residual.RobotStarts.Count == 1 &&
                    residual.RobotStarts.Distinct().Count() == 1,
                 "생존 유닛 시작점 구성이 비정상");
@@ -2025,6 +2027,32 @@ namespace ParkingSim.Tests
             Assert(runs[0].Selected.AutomaticPlan.Plan.Selected.Plan.Ticks ==
                    runs[1].Selected.AutomaticPlan.Plan.Selected.Plan.Ticks,
                 "재배치안 결과가 재현되지 않음");
+        }
+
+        private static void TestHandoverParkedInterference()
+        {
+            (EmergencyProblemV2 problem, PipelinedPlanResultV2 plan) =
+                BatteryGateFixture();
+            var battery = new BatteryModelV2(10000, 100);
+            BatteryHandoverResultV2 result = BatteryHandoverV2.Evaluate(
+                problem, plan, battery, LowChargeForRobotZero(plan, battery));
+            Assert(result.Success && result.HandoverOccurred,
+                "정차 간섭 게이트 픽스처 실패: " + result.FailReason);
+            // 유닛0은 첫 미션을 완결하고 인도 차량 밑에 정차 — 그 pose는
+            // 고정 차량이 아니라 전체 봉쇄로 전환되어야 한다.
+            Assert(result.ConvertedStagingPoseCount >= 1,
+                "인도 차량 밑 정차 유닛의 pose가 봉쇄로 전환되지 않음");
+            Assert(result.ParkedUnitCells.Count >= 2,
+                "정차 봉쇄 셀 기록이 비어 있음");
+            foreach ((int x, int y) in result.ParkedUnitCells)
+            {
+                Assert(problem.IsFloor(x, y),
+                    "원 문제에서 floor였던 셀만 정차 봉쇄 대상이어야 함");
+                Assert(!result.ResidualProblem.IsFloor(x, y),
+                    $"정차 유닛 셀 ({x},{y})가 잔여 문제에서 여전히 통행 가능함");
+            }
+            Assert(result.ResidualPlan.Success && result.ResidualPlan.PhysicallyValid,
+                "정차 봉쇄 반영 후 잔여 계획 실패: " + result.ResidualPlan.FailReason);
         }
 
         private static EmergencyAccessRouteGenerationOptionsV2 ComplexOptions()

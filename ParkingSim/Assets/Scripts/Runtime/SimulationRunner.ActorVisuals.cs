@@ -327,6 +327,7 @@ namespace ParkingSim.Runtime
 
             var decks = new Transform[2];
             var deckRestPositions = new Vector3[2];
+            var axleModules = new Transform[2];
             var armPivots = new Transform[8];
             var armRestRotations = new Quaternion[8];
             var armLiftRotations = new Quaternion[8];
@@ -343,6 +344,7 @@ namespace ParkingSim.Runtime
                 module.transform.localPosition =
                     new Vector3(moduleX, 0f, 0f);
                 module.transform.localRotation = Quaternion.identity;
+                axleModules[moduleIndex] = module.transform;
                 CreateChildPrimitive(
                     PrimitiveType.Cube,
                     module.transform,
@@ -423,6 +425,7 @@ namespace ParkingSim.Runtime
                 ArmPivots = armPivots,
                 ArmRestRotations = armRestRotations,
                 ArmLiftRotations = armLiftRotations,
+                AxleModules = axleModules,
             };
         }
 
