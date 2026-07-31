@@ -22,6 +22,8 @@ namespace ParkingSim.Runtime
             public int BlockingVehicleCount;
             public bool IncludeSecondaryEntrances;
             public int AvailableUnitCount;
+            public string BlockedSignature;
+            public string DisturbanceFailure;
             public List<ApartmentComplexDensityTrialV2> Rows;
         }
 
@@ -75,7 +77,8 @@ namespace ParkingSim.Runtime
                    _readinessBoard.BlockingVehicleCount == _blockingVehicleCount &&
                    _readinessBoard.IncludeSecondaryEntrances ==
                        _includeSecondaryEntrances &&
-                   _readinessBoard.AvailableUnitCount == _availableUnitCount;
+                   _readinessBoard.AvailableUnitCount == _availableUnitCount &&
+                   _readinessBoard.BlockedSignature == BlockedCellsSignature();
         }
 
         private void StartReadinessTask()
@@ -83,12 +86,31 @@ namespace ParkingSim.Runtime
             int blockingVehicleCount = _blockingVehicleCount;
             bool includeSecondaryEntrances = _includeSecondaryEntrances;
             int availableUnitCount = _availableUnitCount;
+            IReadOnlyList<(int X, int Y)> blockedCells = BlockedCellsSnapshot();
+            string blockedSignature = BlockedCellsSignature();
             PhysicalTimeProfileV2 profile = _timeProfile;
             _readinessTask = Task.Run(() =>
             {
                 ApartmentComplexScenarioV2 complex =
                     ApartmentComplexScenarioFactoryV2.BuildDensity(
                         blockingVehicleCount, profile.CreateOperationTiming());
+                if (blockedCells.Count > 0)
+                {
+                    DisturbedComplexBuildResultV2 disturbed =
+                        ApartmentComplexDisturbanceV2.Apply(
+                            complex,
+                            new ComplexDisturbanceV2("관제보드 봉쇄", blockedCells));
+                    if (!disturbed.Success)
+                        return new ReadinessBoard
+                        {
+                            BlockingVehicleCount = blockingVehicleCount,
+                            IncludeSecondaryEntrances = includeSecondaryEntrances,
+                            AvailableUnitCount = availableUnitCount,
+                            BlockedSignature = blockedSignature,
+                            DisturbanceFailure = disturbed.FailReason,
+                        };
+                    complex = disturbed.Scenario;
+                }
                 var session = new ApartmentComplexPlanningSessionV2(
                     complex,
                     activeRobotCount: availableUnitCount,
@@ -113,6 +135,7 @@ namespace ParkingSim.Runtime
                     BlockingVehicleCount = blockingVehicleCount,
                     IncludeSecondaryEntrances = includeSecondaryEntrances,
                     AvailableUnitCount = availableUnitCount,
+                    BlockedSignature = blockedSignature,
                     Rows = rows,
                 };
             });
@@ -129,7 +152,10 @@ namespace ParkingSim.Runtime
             GUI.Label(new Rect(x, y, 260f, 20f),
                 "가용 " + _availableUnitCount + "/4조 · 도로 주차 " +
                 _blockingVehicleCount + "대 · " +
-                (_includeSecondaryEntrances ? "서문+동문" : "서문 단일"));
+                (_includeSecondaryEntrances ? "서문+동문" : "서문 단일") +
+                (_blockageSegments.Count > 0
+                    ? " · 봉쇄 " + _blockageSegments.Count + "건"
+                    : ""));
             y += 22f;
             bool stale = !ReadinessBoardCurrent();
             if (_readinessBoard == null)
@@ -142,6 +168,12 @@ namespace ParkingSim.Runtime
                 GUI.Label(new Rect(x, y, 260f, 20f),
                     "조건 변경 반영 재계산 중… (아래는 직전 값)");
                 y += 20f;
+            }
+            if (_readinessBoard.Rows == null)
+            {
+                GUI.Label(new Rect(x, y, 260f, 40f),
+                    "교란 적용 불가: " + _readinessBoard.DisturbanceFailure);
+                return;
             }
 
             Color previousColor = GUI.color;

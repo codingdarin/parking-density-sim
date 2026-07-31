@@ -58,7 +58,9 @@ namespace ParkingSim.Runtime
             GUI.Label(new Rect(24f, 142f, 596f, 24f),
                 "• 계획 상태: 소방차 진입 구역까지의 접근로 선정 완료");
             GUI.Label(new Rect(24f, 166f, 596f, 24f),
-                "• 화면 표시: 청록=선택 경로 · 파랑=대안 · 주황=이동 차량 · 노랑=확보 경계");
+                "• 화면 표시: 청록=선택 경로 · 파랑=대안 · 주황=이동 차량 · " +
+                "노랑=확보 경계 · 적갈=도로 봉쇄" +
+                (_blockagePlacementMode ? " (배치 모드: 도로 클릭)" : ""));
             string cameraLabel = _selectedTransportCamera >= 0
                 ? "운송 장비 " + (_selectedTransportCamera + 1) + "번 추적 중"
                 : _visualMode == SimulationVisualMode.Control
@@ -169,6 +171,22 @@ namespace ParkingSim.Runtime
                         _blockingVehicleCount);
                 }
             }
+
+            y += 42f;
+            GUI.Label(new Rect(x, y, 260f, 22f), "도로 봉쇄 (쓰러진 나무)");
+            y += 24f;
+            if (DrawActionButton(
+                    new Rect(x, y, 124f, 32f),
+                    "봉쇄 배치 모드",
+                    _blockagePlacementMode,
+                    _complex != null))
+                _blockagePlacementMode = !_blockagePlacementMode;
+            if (DrawActionButton(
+                    new Rect(x + 132f, y, 124f, 32f),
+                    "전체 해제 (" + _blockageSegments.Count + ")",
+                    false,
+                    canReplan && _blockageSegments.Count > 0))
+                ClearBlockages();
 
             y += 42f;
             GUI.Label(new Rect(x, y, 260f, 22f), "재생 제어");
