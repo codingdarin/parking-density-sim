@@ -11,6 +11,41 @@ namespace ParkingSim.Runtime
 {
     partial class SimulationRunner
     {
+        /// <summary>관제 위성 뷰용 슬롯 성격 오버레이 — 적치면(초록)·주차면(붉은)을
+        /// 얇은 반투명 판으로 표시한다. 관제 레이어라 3D모드에서는 보이지 않는다.</summary>
+        private void BuildSlotAnalysisOverlay()
+        {
+            foreach (ParkingSlotV2 slot in _problem.Slots)
+            {
+                var quad = GameObject.CreatePrimitive(PrimitiveType.Cube);
+                Track(quad, SimulationVisualLayer.Control);
+                quad.name = "SlotOverlay-" + slot.Id;
+                var second = slot.Pose.SecondCell;
+                quad.transform.position = new Vector3(
+                    (slot.Pose.X + second.X) * 0.5f,
+                    0.02f,
+                    (slot.Pose.Y + second.Y) * 0.5f);
+                quad.transform.localScale =
+                    slot.Pose.Orientation == VehicleOrientation.Horizontal
+                        ? new Vector3(1.94f, 0.02f, 0.94f)
+                        : new Vector3(0.94f, 0.02f, 1.94f);
+                Collider collider = quad.GetComponent<Collider>();
+                if (collider != null) Destroy(collider);
+                MeshRenderer renderer = quad.GetComponent<MeshRenderer>();
+                renderer.material = CreatePlumbobGlassMaterial();
+                renderer.shadowCastingMode =
+                    UnityEngine.Rendering.ShadowCastingMode.Off;
+                renderer.receiveShadows = false;
+                Color tint = slot.Kind == SlotKind.Staging
+                    ? new Color(0.15f, 0.85f, 0.40f, 0.30f)
+                    : new Color(0.95f, 0.30f, 0.25f, 0.26f);
+                Material material = renderer.material;
+                material.color = tint;
+                if (material.HasProperty("_BaseColor"))
+                    material.SetColor("_BaseColor", tint);
+            }
+        }
+
         private void BuildPresentationGround()
         {
             EnsureSiteMaterials();
