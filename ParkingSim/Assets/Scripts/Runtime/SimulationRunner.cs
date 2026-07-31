@@ -38,6 +38,7 @@ namespace ParkingSim.Runtime
             public bool IncludeSecondaryEntrances;
             public ApartmentComplexScenarioV2 Complex;
             public ApartmentComplexPlanResultV2 ComplexPlan;
+            public string DisturbanceFailure;
         }
 
         private sealed class TransportLiftVisual
@@ -119,7 +120,7 @@ namespace ParkingSim.Runtime
         private float _planningStartedAt;
         private static readonly Rect GuideBounds = new Rect(12f, 12f, 620f, 260f);
         private const float ControlPanelWidth = 286f;
-        private const float ControlPanelHeight = 368f;
+        private const float ControlPanelHeight = 434f;
 
         private void Start()
         {
@@ -143,6 +144,7 @@ namespace ParkingSim.Runtime
             }
             bool includeSecondaryEntrances = preset != 0;
             int availableUnitCount = _availableUnitCount;
+            IReadOnlyList<(int X, int Y)> blockedCells = BlockedCellsSnapshot();
             OperationTimingV2 timing = _timeProfile.CreateOperationTiming();
             _pendingBuildingId = buildingId;
             _pendingBlockingVehicleCount = blockingVehicleCount;
@@ -159,6 +161,22 @@ namespace ParkingSim.Runtime
                     ApartmentComplexScenarioFactoryV2.BuildDensity(
                         blockingVehicleCount,
                         timing);
+                if (blockedCells.Count > 0)
+                {
+                    DisturbedComplexBuildResultV2 disturbed =
+                        ApartmentComplexDisturbanceV2.Apply(
+                            complex,
+                            new ComplexDisturbanceV2("화면 봉쇄", blockedCells));
+                    if (!disturbed.Success)
+                        return new PreparedScenario
+                        {
+                            BuildingId = buildingId,
+                            BlockingVehicleCount = blockingVehicleCount,
+                            IncludeSecondaryEntrances = includeSecondaryEntrances,
+                            DisturbanceFailure = disturbed.FailReason,
+                        };
+                    complex = disturbed.Scenario;
+                }
                 ApartmentComplexPlanResultV2 complexPlan =
                     ApartmentComplexEmergencyPlannerV2.Solve(
                         complex,
@@ -203,6 +221,12 @@ namespace ParkingSim.Runtime
 
         private void ApplyPreparedScenario(PreparedScenario prepared)
         {
+            if (prepared.DisturbanceFailure != null)
+            {
+                _inputStatus = "봉쇄 적용 실패: " + prepared.DisturbanceFailure;
+                Debug.LogWarning("[Model V2] " + _inputStatus);
+                return;
+            }
             ApartmentComplexPlanResultV2 complexPlan = prepared.ComplexPlan;
             if (!complexPlan.Success)
             {
@@ -269,6 +293,7 @@ namespace ParkingSim.Runtime
             BuildRouteOverlays();
             BuildFireMarker();
             BuildEntranceMarker();
+            BuildBlockageMarkers();
             BuildFixedCars();
             BuildMovableCars();
             BuildRobots();
@@ -306,20 +331,33 @@ namespace ParkingSim.Runtime
                 !IsPointerOverHud(pointerPosition) &&
                 _planningTask == null)
             {
-                int clickedBuildingId;
-                string failure;
-                if (TryResolveClickedBuilding(
-                        pointerPosition, out clickedBuildingId, out failure))
+                if (_blockagePlacementMode)
                 {
-                    BeginPresetLoad(
-                        _includeSecondaryEntrances ? 1 : 0,
-                        clickedBuildingId,
-                        _blockingVehicleCount);
+                    (int X, int Y) roadCell;
+                    string blockFailure;
+                    if (TryResolveClickedRoadCell(
+                            pointerPosition, out roadCell, out blockFailure))
+                        HandleBlockageClick(roadCell);
+                    else
+                        _inputStatus = blockFailure;
                 }
                 else
                 {
-                    _inputStatus = failure;
-                    Debug.LogWarning("[Model V2] " + failure);
+                    int clickedBuildingId;
+                    string failure;
+                    if (TryResolveClickedBuilding(
+                            pointerPosition, out clickedBuildingId, out failure))
+                    {
+                        BeginPresetLoad(
+                            _includeSecondaryEntrances ? 1 : 0,
+                            clickedBuildingId,
+                            _blockingVehicleCount);
+                    }
+                    else
+                    {
+                        _inputStatus = failure;
+                        Debug.LogWarning("[Model V2] " + failure);
+                    }
                 }
             }
             if (_plan == null) return;
