@@ -48,8 +48,9 @@ namespace ParkingSim.Runtime
         {
             SharedRoot.SetActive(true);
             ControlRoot.SetActive(mode == SimulationVisualMode.Control);
-            ThreeDimensionalRoot.SetActive(
-                mode == SimulationVisualMode.ThreeDimensional);
+            // 관제모드도 실제 단지(3D 환경)를 위성 뷰 바탕으로 쓴다 —
+            // 분석 격자 대신 실제 지형 위에 관제 오버레이만 얹는다.
+            ThreeDimensionalRoot.SetActive(true);
         }
 
         private GameObject CreateRoot(string name)

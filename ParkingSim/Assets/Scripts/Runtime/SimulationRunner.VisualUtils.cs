@@ -11,27 +11,6 @@ namespace ParkingSim.Runtime
 {
     partial class SimulationRunner
     {
-        private Color CellColor(int x, int y)
-        {
-            if (!_problem.IsFloor(x, y)) return new Color(0.09f, 0.10f, 0.12f);
-            if (IsSlotCell(x, y, SlotKind.Staging)) return new Color(0.12f, 0.42f, 0.24f);
-            if (IsSlotCell(x, y, SlotKind.Blocking)) return new Color(0.48f, 0.16f, 0.16f);
-            if (_problem.IsClearanceCell(x, y)) return new Color(0.42f, 0.30f, 0.10f);
-            return new Color(0.22f, 0.25f, 0.30f);
-        }
-
-        private bool IsSlotCell(int x, int y, SlotKind kind)
-        {
-            foreach (ParkingSlotV2 slot in _problem.Slots)
-            {
-                if (slot.Kind != kind) continue;
-                var second = slot.Pose.SecondCell;
-                if ((slot.Pose.X == x && slot.Pose.Y == y) ||
-                    (second.X == x && second.Y == y)) return true;
-            }
-            return false;
-        }
-
         private static TimedRobotStateV2 StateAt(List<TimedRobotStateV2> timeline, int tick)
         {
             for (int i = timeline.Count - 1; i >= 0; i--)
