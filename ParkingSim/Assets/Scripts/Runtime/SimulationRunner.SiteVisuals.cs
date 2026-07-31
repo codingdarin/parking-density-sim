@@ -657,7 +657,8 @@ namespace ParkingSim.Runtime
                 name,
                 origin,
                 new Vector3(width, height, depth));
-            BuildBuildingNumber(name, origin, width, height, depth);
+            // 동 번호는 현관 로비 사인(BuildLobbySign) 하나만 사용 — 상단 대형
+            // 라벨은 중복 표기라 제거 (사용자 피드백).
         }
 
         private void BuildApartmentClickTarget(
@@ -700,27 +701,6 @@ namespace ParkingSim.Runtime
                 targetBottomCenter.x - bounds.center.x,
                 targetBottomCenter.y - bounds.min.y,
                 targetBottomCenter.z - bounds.center.z);
-        }
-
-        private void BuildBuildingNumber(
-            string name,
-            Vector3 bottomCenter,
-            float width,
-            float height,
-            float depth)
-        {
-            var label = new GameObject(name + "-Label");
-            Track(label, SimulationVisualLayer.ThreeDimensional);
-            label.transform.position = bottomCenter + new Vector3(
-                0f, height * 0.55f, -depth * 0.51f);
-            TextMesh text = label.AddComponent<TextMesh>();
-            text.text = name.Substring(0, 3) + "동";
-            text.anchor = TextAnchor.MiddleCenter;
-            text.alignment = TextAlignment.Center;
-            text.characterSize = Mathf.Max(0.18f, width * 0.035f);
-            text.fontSize = 64;
-            text.color = Color.white;
-            _threeDimensionalLabels.Add(text);
         }
 
         private void BuildRouteOverlay(
