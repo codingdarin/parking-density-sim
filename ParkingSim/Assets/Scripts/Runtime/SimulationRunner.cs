@@ -137,6 +137,42 @@ namespace ParkingSim.Runtime
                 ApartmentComplexScenarioFactoryV2.MaximumBlockingVehicles;
             _requestedBlockingVehicleCount = _blockingVehicleCount;
             BeginPresetLoad(1, _fireBuildingId, _blockingVehicleCount);
+            // 첫 계획이 계산되는 동안 스카이박스 대신 단지 현황을 먼저 보여준다.
+            // 환경 지오메트리는 계산이 필요 없어 즉시 생성 가능하다.
+            BuildScenarioPreview(
+                ApartmentComplexScenarioFactoryV2.BuildDensity(
+                    _blockingVehicleCount,
+                    _timeProfile.CreateOperationTiming()));
+        }
+
+        /// <summary>
+        /// 계획 없는 단지 프리뷰 — 도로·건물·주차 차량만 정적으로 생성한다.
+        /// 계획이 완료되면 ApplyPreparedScenario가 전체를 재구축하며 대체한다.
+        /// </summary>
+        private void BuildScenarioPreview(ApartmentComplexScenarioV2 complex)
+        {
+            _complex = complex;
+            _problem = complex.BaseProblem;
+            _plan = null;
+            _fireBuilding = null;
+            _selectedRoute = null;
+            _candidateRoutes = null;
+            _selectedEntrance = null;
+            if (_visualLayers != null && _visualLayers.Root != null)
+                Destroy(_visualLayers.Root);
+            _visualLayers = new SimulationVisualLayers();
+            _carViews.Clear();
+            _carTrackingFrames.Clear();
+            _missions.Clear();
+            _threeDimensionalLabels.Clear();
+            BuildControlGrid();
+            BuildPresentationGround();
+            BuildApartmentContext();
+            BuildFixedCars();
+            BuildMovableCars();
+            BuildBlockageMarkers();
+            SetupLighting();
+            ApplyVisualMode();
         }
 
         private void BeginPresetLoad(
@@ -367,7 +403,13 @@ namespace ParkingSim.Runtime
                     }
                 }
             }
-            if (_plan == null) return;
+            if (_plan == null)
+            {
+                // 프리뷰 중에도 카메라 조작·라벨 빌보드는 살아 있어야 한다
+                UpdateCameraNavigation();
+                ApplyThreeDimensionalLabelFacing();
+                return;
+            }
             if (!_paused) _time += Time.deltaTime;
             float cycle = _plan.Ticks + EndHoldTicks;
             float tick = (_time / SecondsPerTick) % cycle;
