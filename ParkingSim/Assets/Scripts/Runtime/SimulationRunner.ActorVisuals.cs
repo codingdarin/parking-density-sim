@@ -82,6 +82,39 @@ namespace ParkingSim.Runtime
             return mesh;
         }
 
+        /// <summary>플럼밥용 투명 글래스 — 반투명 URP Lit, 높은 매끄러움.
+        /// 틴트는 SetTrackingFrameColor가 알파를 보존하며 입힌다.</summary>
+        private static Material CreatePlumbobGlassMaterial()
+        {
+            Shader shader = Shader.Find("Universal Render Pipeline/Lit");
+            if (shader == null) shader = Shader.Find("Standard");
+            Material material = new Material(shader);
+            material.name = "PlumbobGlass";
+            if (material.HasProperty("_Surface")) material.SetFloat("_Surface", 1f);
+            if (material.HasProperty("_Blend")) material.SetFloat("_Blend", 0f);
+            if (material.HasProperty("_SrcBlend"))
+                material.SetFloat(
+                    "_SrcBlend",
+                    (float)UnityEngine.Rendering.BlendMode.SrcAlpha);
+            if (material.HasProperty("_DstBlend"))
+                material.SetFloat(
+                    "_DstBlend",
+                    (float)UnityEngine.Rendering.BlendMode.OneMinusSrcAlpha);
+            if (material.HasProperty("_ZWrite")) material.SetFloat("_ZWrite", 0f);
+            material.EnableKeyword("_SURFACE_TYPE_TRANSPARENT");
+            material.renderQueue =
+                (int)UnityEngine.Rendering.RenderQueue.Transparent;
+            if (material.HasProperty("_Metallic"))
+                material.SetFloat("_Metallic", 0.10f);
+            if (material.HasProperty("_Smoothness"))
+                material.SetFloat("_Smoothness", 0.94f);
+            Color baseColor = new Color(1f, 1f, 1f, 0.60f);
+            material.color = baseColor;
+            if (material.HasProperty("_BaseColor"))
+                material.SetColor("_BaseColor", baseColor);
+            return material;
+        }
+
         private GameObject BuildVehicleTrackingFrame(
             int vehicle,
             VehiclePose pose)
@@ -94,7 +127,7 @@ namespace ParkingSim.Runtime
             MeshFilter filter = gem.AddComponent<MeshFilter>();
             filter.sharedMesh = PlumbobMesh();
             MeshRenderer renderer = gem.AddComponent<MeshRenderer>();
-            renderer.material = CreateTrackingLineMaterial();
+            renderer.material = CreatePlumbobGlassMaterial();
             renderer.shadowCastingMode =
                 UnityEngine.Rendering.ShadowCastingMode.Off;
             renderer.receiveShadows = false;

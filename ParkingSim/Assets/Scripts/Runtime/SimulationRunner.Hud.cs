@@ -235,36 +235,66 @@ namespace ParkingSim.Runtime
 
         private void DrawPlanningOverlay()
         {
-            // 초기(프리뷰) 계산은 화면 하단 중앙의 큰 진행 카드로, 이후 재계획은
+            // 초기(프리뷰) 계산은 화면 정중앙의 대형 진행 카드로, 이후 재계획은
             // 상단의 작은 바로 표시한다.
             bool initial = _plan == null;
-            float width = initial ? 560f : 420f;
-            float height = initial ? 92f : 70f;
+            float width = initial
+                ? Mathf.Min(820f, Screen.width - 40f)
+                : 420f;
+            float height = initial ? 168f : 70f;
             Rect overlay = new Rect(
                 (Screen.width - width) / 2f,
-                initial ? Screen.height * 0.68f : 18f,
+                initial ? (Screen.height - height) / 2f : 18f,
                 width,
                 height);
             GUI.Box(overlay, string.Empty);
             GUI.Box(overlay, string.Empty);
+            GUI.Box(overlay, string.Empty);
             float elapsed = Time.realtimeSinceStartup - _planningStartedAt;
-            string target = initial
-                ? "단지 상황 파악 완료 · 초기 대응 계획 계산 중 · " +
-                  elapsed.ToString("0.0") + "초"
-                : _pendingBuildingId + "동 · " +
-                  (_pendingIncludeSecondaryEntrances
-                      ? "서문·동문 비교"
-                      : "서문만 사용") +
-                  " · 도로 주차 " + _pendingBlockingVehicleCount +
-                  "대 경로 계산 중 · " + elapsed.ToString("0.0") + "초";
-            GUI.Label(
-                new Rect(overlay.x + 14f, overlay.y + 8f, width - 28f, 22f),
-                target);
-            Rect track = new Rect(
-                overlay.x + 14f,
-                overlay.y + (initial ? 42f : 39f),
-                width - 28f,
-                initial ? 26f : 16f);
+            Rect track;
+            if (initial)
+            {
+                var titleStyle = new GUIStyle(GUI.skin.label)
+                {
+                    fontSize = 32,
+                    fontStyle = FontStyle.Bold,
+                    alignment = TextAnchor.MiddleCenter,
+                };
+                var subtitleStyle = new GUIStyle(GUI.skin.label)
+                {
+                    fontSize = 18,
+                    alignment = TextAnchor.MiddleCenter,
+                };
+                GUI.Label(
+                    new Rect(overlay.x, overlay.y + 16f, width, 42f),
+                    "초기 대응 계획 계산 중",
+                    titleStyle);
+                GUI.Label(
+                    new Rect(overlay.x, overlay.y + 62f, width, 26f),
+                    "단지 상황 파악 완료 · " + elapsed.ToString("0.0") + "초 경과",
+                    subtitleStyle);
+                track = new Rect(
+                    overlay.x + 24f,
+                    overlay.y + 104f,
+                    width - 48f,
+                    36f);
+            }
+            else
+            {
+                GUI.Label(
+                    new Rect(overlay.x + 14f, overlay.y + 8f, width - 28f, 22f),
+                    _pendingBuildingId + "동 · " +
+                    (_pendingIncludeSecondaryEntrances
+                        ? "서문·동문 비교"
+                        : "서문만 사용") +
+                    " · 도로 주차 " + _pendingBlockingVehicleCount +
+                    "대 경로 계산 중 · " + elapsed.ToString("0.0") + "초");
+                track = new Rect(
+                    overlay.x + 14f,
+                    overlay.y + 39f,
+                    width - 28f,
+                    16f);
+            }
             GUI.Box(track, string.Empty);
             const float segmentWidth = 92f;
             float travel = Mathf.Max(0f, track.width - segmentWidth - 4f);

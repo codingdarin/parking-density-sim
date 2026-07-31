@@ -229,9 +229,12 @@ namespace ParkingSim.Runtime
 
         private static void ApplyMaterialColor(Material material, Color color)
         {
-            material.color = color;
+            // 재질이 가진 알파(글래스 반투명)를 보존하고 색만 입힌다
+            Color applied = color;
+            applied.a = material.color.a;
+            material.color = applied;
             if (material.HasProperty("_BaseColor"))
-                material.SetColor("_BaseColor", color);
+                material.SetColor("_BaseColor", applied);
         }
 
         private static GameObject CreateChildPrimitive(
