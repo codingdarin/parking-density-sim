@@ -254,6 +254,7 @@ namespace ParkingSim.Runtime
             _swerveWeights = new float[viewCount];
             _swerveLanes = new float[viewCount];
             _swerveLaneIsX = new bool[viewCount];
+            _swerveHasLane = new bool[viewCount];
             for (int robot = 0; robot < viewCount; robot++)
             {
                 GameObject cube = SimulationVisualAssetFactory.TryCreate(
