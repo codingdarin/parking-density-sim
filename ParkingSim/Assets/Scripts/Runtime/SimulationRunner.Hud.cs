@@ -204,12 +204,13 @@ namespace ParkingSim.Runtime
 
         private static Rect PlaybackBarBounds()
         {
-            float width = Mathf.Min(760f, Screen.width - 40f);
-            return new Rect(
-                (Screen.width - width) / 2f,
-                Screen.height - 76f,
-                width,
-                64f);
+            // 상단: 안내 패널 오른쪽 ~ 조작 패널 왼쪽 사이
+            float left = GuideBounds.xMax + 12f;
+            float width = Mathf.Clamp(
+                Screen.width - left - ControlPanelWidth - 36f,
+                420f,
+                760f);
+            return new Rect(left, 12f, width, 64f);
         }
 
         /// <summary>하단 재생바 — 역재생/일시정지/재생 + 시점 이동 슬라이더.
@@ -247,16 +248,23 @@ namespace ParkingSim.Runtime
                 _playbackDirection = 1f;
                 _paused = false;
             }
+            bool doubleSpeed = _playbackSpeed > 1.5f;
+            if (DrawActionButton(
+                    new Rect(x + 282f, y, 88f, 26f),
+                    "▶▶ 2배속",
+                    doubleSpeed,
+                    true))
+                _playbackSpeed = doubleSpeed ? 1f : 2f;
             double planSeconds = _timeProfile.PlanSeconds(_plan.Ticks);
             double perTickSeconds = _plan.Ticks > 0
                 ? planSeconds / _plan.Ticks
                 : 0.0;
             float shownTick = Mathf.Min(_displayTick, _plan.Ticks);
             GUI.Label(
-                new Rect(x + 288f, y + 3f, bar.width - 302f, 22f),
+                new Rect(x + 382f, y + 3f, bar.width - 396f, 22f),
                 FormatDuration(shownTick * perTickSeconds) + " / " +
                 FormatDuration(planSeconds) +
-                "  (틱 " + Mathf.RoundToInt(shownTick) + "/" + _plan.Ticks + ")");
+                " (틱 " + Mathf.RoundToInt(shownTick) + "/" + _plan.Ticks + ")");
             float soughtTick = GUI.HorizontalSlider(
                 new Rect(x, y + 34f, bar.width - 24f, 18f),
                 shownTick,
@@ -304,7 +312,7 @@ namespace ParkingSim.Runtime
             float height = initial ? 168f : 70f;
             Rect overlay = new Rect(
                 (Screen.width - width) / 2f,
-                initial ? (Screen.height - height) / 2f : 18f,
+                initial ? (Screen.height - height) / 2f : 92f,
                 width,
                 height);
             GUI.Box(overlay, string.Empty);
