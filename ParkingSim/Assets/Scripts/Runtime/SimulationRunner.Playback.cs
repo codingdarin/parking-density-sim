@@ -51,10 +51,13 @@ namespace ParkingSim.Runtime
                             0f,
                             1f,
                             Mathf.Clamp01((serviceProgress - 0.85f) / 0.15f));
-                    Vector3 naturalPosition = Vector3.Lerp(
-                        RobotPosition(a, _robotUsesCustomView[robot]),
-                        RobotPosition(b, _robotUsesCustomView[robot]),
-                        fraction);
+                    Vector3 naturalPosition = ApplyUnderCarSwerve(
+                        Vector3.Lerp(
+                            RobotPosition(a, _robotUsesCustomView[robot]),
+                            RobotPosition(b, _robotUsesCustomView[robot]),
+                            fraction),
+                        a,
+                        b);
                     _robotViews[robot].transform.position = Vector3.Lerp(
                         naturalPosition,
                         RobotPosition(servicePose, _robotUsesCustomView[robot]),
@@ -66,10 +69,13 @@ namespace ParkingSim.Runtime
                 }
                 else
                 {
-                    _robotViews[robot].transform.position = Vector3.Lerp(
-                        RobotPosition(a, _robotUsesCustomView[robot]),
-                        RobotPosition(b, _robotUsesCustomView[robot]),
-                        fraction);
+                    _robotViews[robot].transform.position = ApplyUnderCarSwerve(
+                        Vector3.Lerp(
+                            RobotPosition(a, _robotUsesCustomView[robot]),
+                            RobotPosition(b, _robotUsesCustomView[robot]),
+                            fraction),
+                        a,
+                        b);
                     _robotViews[robot].transform.rotation =
                         SmoothRobotRotation(
                             _robotViews[robot].transform.rotation,
@@ -364,6 +370,46 @@ namespace ParkingSim.Runtime
                         liftVisual.ArmLiftRotations[index],
                         armAmount);
             }
+        }
+
+        /// <summary>
+        /// 하부 통과 스워브 — 가로로 선 주차 차량을 가로지를 때 타이어(축선)를
+        /// 뚫지 않도록 렌더 위치만 차량 중심(앞뒤 축 사이)으로 비켜 준다.
+        /// 적재 중이거나 차 축과 평행하게 지나는 경우는 보정하지 않는다.
+        /// 모델 좌표는 불변 — 순수 시각 보정.
+        /// </summary>
+        private Vector3 ApplyUnderCarSwerve(
+            Vector3 position,
+            TimedRobotStateV2 a,
+            TimedRobotStateV2 b)
+        {
+            if (a.Carrying || b.Carrying) return position;
+            var cell = (Mathf.RoundToInt(position.x), Mathf.RoundToInt(position.z));
+            if (!_fixedPoseByCell.TryGetValue(cell, out VehiclePose pose))
+                return position;
+            bool carHorizontal =
+                pose.Orientation == VehicleOrientation.Horizontal;
+            int travelX = Mathf.Abs(b.X - a.X);
+            int travelZ = Mathf.Abs(b.Y - a.Y);
+            // 차 축과 평행 이동은 좌우 바퀴 사이 통로라 보정 불요
+            if (carHorizontal && travelX > travelZ) return position;
+            if (!carHorizontal && travelZ > travelX) return position;
+            var second = pose.SecondCell;
+            if (carHorizontal)
+            {
+                float centerX = (pose.X + second.X) * 0.5f;
+                float weight = Mathf.Clamp01(
+                    1.5f - 2f * Mathf.Abs(position.z - pose.Y));
+                position.x = Mathf.Lerp(position.x, centerX, weight);
+            }
+            else
+            {
+                float centerZ = (pose.Y + second.Y) * 0.5f;
+                float weight = Mathf.Clamp01(
+                    1.5f - 2f * Mathf.Abs(position.x - pose.X));
+                position.z = Mathf.Lerp(position.z, centerZ, weight);
+            }
+            return position;
         }
 
         private int ServicePhase(int robot, float tick, out float progress)

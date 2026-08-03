@@ -119,6 +119,33 @@ namespace ParkingSim.Runtime
         private SimulationVisualMode _visualMode =
             SimulationVisualMode.ThreeDimensional;
         private bool _paused;
+        /// <summary>주차(고정) 차량 pose의 셀 색인 — 하부 통과 스워브 보정용</summary>
+        private readonly Dictionary<(int X, int Y), VehiclePose> _fixedPoseByCell =
+            new Dictionary<(int X, int Y), VehiclePose>();
+
+        /// <summary>추적 카메라 가림 처리 대상(건물) — 유리 실루엣 전환용</summary>
+        private sealed class OccluderEntry
+        {
+            public Bounds Bounds;
+            public Renderer[] Renderers;
+            public Material[][] Originals;
+            public bool Ghosted;
+        }
+
+        private readonly List<OccluderEntry> _occluders = new List<OccluderEntry>();
+        private Material _ghostMaterial;
+
+        private void RebuildFixedPoseIndex()
+        {
+            _fixedPoseByCell.Clear();
+            foreach (VehiclePose pose in _problem.FixedVehiclePoses)
+            {
+                _fixedPoseByCell[(pose.X, pose.Y)] = pose;
+                var second = pose.SecondCell;
+                _fixedPoseByCell[(second.X, second.Y)] = pose;
+            }
+        }
+
         /// <summary>재생 방향 — +1 정방향, -1 역재생</summary>
         private float _playbackDirection = 1f;
         /// <summary>재생 배속 — 1 또는 2</summary>
@@ -159,6 +186,7 @@ namespace ParkingSim.Runtime
         {
             _complex = complex;
             _problem = complex.BaseProblem;
+            RebuildFixedPoseIndex();
             _plan = null;
             _fireBuilding = null;
             _selectedRoute = null;
@@ -166,6 +194,7 @@ namespace ParkingSim.Runtime
             _selectedEntrance = null;
             if (_visualLayers != null && _visualLayers.Root != null)
                 Destroy(_visualLayers.Root);
+            _occluders.Clear();
             _visualLayers = new SimulationVisualLayers();
             _carViews.Clear();
             _carTrackingFrames.Clear();
@@ -317,12 +346,14 @@ namespace ParkingSim.Runtime
 
             if (_visualLayers != null && _visualLayers.Root != null)
                 Destroy(_visualLayers.Root);
+            _occluders.Clear();
             _visualLayers = new SimulationVisualLayers();
             _carViews.Clear();
             _carTrackingFrames.Clear();
             _missions.Clear();
             _threeDimensionalLabels.Clear();
             _problem = built.Problem;
+            RebuildFixedPoseIndex();
             _plan = plan;
             _scenarioName =
                 ScenarioDisplayName(prepared.Kind) + " " +
@@ -436,6 +467,7 @@ namespace ParkingSim.Runtime
                     cycleSeconds);
             float tick = _time / SecondsPerTick;
             ApplyTick(Mathf.Min(tick, _plan.Ticks));
+            UpdateTrackingOcclusion();
             AnimateFireMarker();
             UpdateCameraNavigation();
             ApplyThreeDimensionalLabelFacing();
