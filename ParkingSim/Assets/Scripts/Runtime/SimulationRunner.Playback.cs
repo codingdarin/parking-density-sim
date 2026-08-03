@@ -24,11 +24,6 @@ namespace ParkingSim.Runtime
 
         private void ApplyTick(float timelineTick)
         {
-            // 시간 불연속(시크·순환) 감지 — 스워브 히스테리시스는 연속 재생
-            // 전제라, 점프 후엔 지난 문맥의 레인 핀이 유령 변위를 만든다
-            // (정지 상태에선 해제 조건이 발동하지 않아 영구 잔류)
-            if (Mathf.Abs(timelineTick - _displayTick) > 1.5f)
-                ResetSwerveState();
             _displayTick = timelineTick;
             int aTick = Mathf.Clamp(Mathf.FloorToInt(timelineTick), 0, _plan.Ticks);
             int bTick = Mathf.Min(aTick + 1, _plan.Ticks);
@@ -56,15 +51,8 @@ namespace ParkingSim.Runtime
                             0f,
                             1f,
                             Mathf.Clamp01((serviceProgress - 0.85f) / 0.15f));
-                    Vector3 naturalPosition = ApplyUnderCarSwerve(
-                        Vector3.Lerp(
-                            RobotPosition(a, _robotUsesCustomView[robot]),
-                            RobotPosition(b, _robotUsesCustomView[robot]),
-                            fraction),
-                        a,
-                        b,
-                        timelineTick,
-                        robot);
+                    Vector3 naturalPosition = SmoothedRobotPosition(
+                        robot, timelineTick, _robotUsesCustomView[robot]);
                     _robotViews[robot].transform.position = Vector3.Lerp(
                         naturalPosition,
                         RobotPosition(servicePose, _robotUsesCustomView[robot]),
@@ -76,23 +64,27 @@ namespace ParkingSim.Runtime
                 }
                 else
                 {
-                    _robotViews[robot].transform.position = ApplyUnderCarSwerve(
-                        Vector3.Lerp(
-                            RobotPosition(a, _robotUsesCustomView[robot]),
-                            RobotPosition(b, _robotUsesCustomView[robot]),
-                            fraction),
-                        a,
-                        b,
-                        timelineTick,
-                        robot);
+                    _robotViews[robot].transform.position =
+                        SmoothedRobotPosition(
+                            robot, timelineTick, _robotUsesCustomView[robot]);
+                    // 회전은 폴리라인 접선 기반 — 직선화된 대각 구간에서
+                    // 진행 방향을 그대로 바라본다. 적재 중엔 pose 축 고정.
+                    Quaternion rotationTarget;
+                    if (a.Carrying || b.Carrying)
+                        rotationTarget = Quaternion.Lerp(
+                            RobotRotation(a), RobotRotation(b), fraction);
+                    else
+                        rotationTarget = PathHeadingRotation(
+                            SampleSmoothedPlanar(
+                                robot, Mathf.Max(0f, timelineTick - 0.5f)),
+                            SampleSmoothedPlanar(
+                                robot,
+                                Mathf.Min(_plan.Ticks, timelineTick + 0.5f)),
+                            _robotViews[robot].transform.rotation);
                     _robotViews[robot].transform.rotation =
                         SmoothRobotRotation(
                             _robotViews[robot].transform.rotation,
-                            RobotVisualTargetRotation(
-                                a,
-                                b,
-                                fraction,
-                                _robotViews[robot].transform.rotation));
+                            rotationTarget);
                 }
                 SetColor(_robotViews[robot], RobotColor(robot, a.Carrying || b.Carrying));
             }
@@ -102,12 +94,27 @@ namespace ParkingSim.Runtime
                 VehicleVisualState a = VehicleAt(vehicle, aTick);
                 VehicleVisualState b = VehicleAt(vehicle, bTick);
                 GameObject view = _carViews[vehicle];
-                bool customTransport =
-                    _robotUsesCustomView[_missions[vehicle].RobotIndex];
-                Vector3 position = Vector3.Lerp(
-                    VehiclePosition(a.Pose, a.Carried, customTransport),
-                    VehiclePosition(b.Pose, b.Carried, customTransport),
-                    fraction);
+                int carrierRobot = _missions[vehicle].RobotIndex;
+                bool customTransport = _robotUsesCustomView[carrierRobot];
+                Vector3 positionA =
+                    VehiclePosition(a.Pose, a.Carried, customTransport);
+                Vector3 positionB =
+                    VehiclePosition(b.Pose, b.Carried, customTransport);
+                // 적재 중엔 스무딩된 로봇 폴리라인 좌표를 그대로 탄다 —
+                // 로봇과 차량이 별도 경로로 어긋나지 않게
+                if (a.Carried)
+                {
+                    Vector2 planar = SampleSmoothedPlanar(carrierRobot, aTick);
+                    positionA.x = planar.x;
+                    positionA.z = planar.y;
+                }
+                if (b.Carried)
+                {
+                    Vector2 planar = SampleSmoothedPlanar(carrierRobot, bTick);
+                    positionB.x = planar.x;
+                    positionB.z = planar.y;
+                }
+                Vector3 position = Vector3.Lerp(positionA, positionB, fraction);
                 position.y = ServiceVehicleHeight(
                     vehicle,
                     timelineTick,
@@ -379,121 +386,6 @@ namespace ParkingSim.Runtime
                         liftVisual.ArmLiftRotations[index],
                         armAmount);
             }
-        }
-
-        /// <summary>
-        /// 하부 통과 레인 — 히스테리시스 상태 기계 (사용자 설계):
-        /// 전방(현재~+1셀)에 진행과 수직인 주차 차량이 나타나면 그 축간
-        /// 레인에 맞추고, 아무것도 없으면 현 상태를 유지한다(복귀 없음 —
-        /// 기준 부재는 전이 신호가 아니다). 다른 기준이 나타나면 그때만 전환.
-        /// 코너(진행 축이 레인 축과 겹침)에서 해제, 적재 시 리셋.
-        /// 모델 좌표 불변 — 순수 시각 보정.
-        /// </summary>
-        private Vector3 ApplyUnderCarSwerve(
-            Vector3 position,
-            TimedRobotStateV2 a,
-            TimedRobotStateV2 b,
-            float tick,
-            int robot)
-        {
-            if (_swerveWeights == null || robot >= _swerveWeights.Length)
-                return position;
-            float ease = 1f - Mathf.Exp(-7f * Time.deltaTime);
-            if (a.Carrying || b.Carrying)
-            {
-                _swerveWeights[robot] = 0f;
-                _swerveHasLane[robot] = false;
-                return position;
-            }
-            int travelX = Mathf.Abs(b.X - a.X);
-            int travelZ = Mathf.Abs(b.Y - a.Y);
-            if (travelX != 0 || travelZ != 0)
-            {
-                bool travelAlongX = travelX >= travelZ;
-                int direction = travelAlongX
-                    ? (b.X >= a.X ? 1 : -1)
-                    : (b.Y >= a.Y ? 1 : -1);
-                // 코너: 진행 축이 레인 축과 같아지면 레인이 무의미 — 해제
-                if (_swerveHasLane[robot] &&
-                    _swerveLaneIsX[robot] == travelAlongX)
-                    _swerveHasLane[robot] = false;
-                int cellX = Mathf.RoundToInt(position.x);
-                int cellZ = Mathf.RoundToInt(position.z);
-                for (int step = 0; step <= 1; step++)
-                {
-                    (int X, int Y) cell = travelAlongX
-                        ? (cellX + step * direction, cellZ)
-                        : (cellX, cellZ + step * direction);
-                    VehiclePose pose;
-                    if (!TryGetParkedPose(cell, tick, out pose)) continue;
-                    bool carHorizontal =
-                        pose.Orientation == VehicleOrientation.Horizontal;
-                    if (carHorizontal == travelAlongX) continue;
-                    var second = pose.SecondCell;
-                    float coord = carHorizontal
-                        ? (pose.X + second.X) * 0.5f
-                        : (pose.Y + second.Y) * 0.5f;
-                    if (!_swerveHasLane[robot] ||
-                        _swerveLaneIsX[robot] != carHorizontal)
-                    {
-                        // 새 기준 등장 — 레인 장착, 관여도는 수렴으로 따라옴
-                        _swerveHasLane[robot] = true;
-                        _swerveLaneIsX[robot] = carHorizontal;
-                        _swerveLanes[robot] = coord;
-                    }
-                    else if (Mathf.Abs(_swerveLanes[robot] - coord) > 0.01f)
-                    {
-                        // 같은 축의 다른 열 — 레인 값을 부드럽게 이동
-                        _swerveLanes[robot] = Mathf.Lerp(
-                            _swerveLanes[robot], coord, ease);
-                    }
-                    break;
-                }
-            }
-            _swerveWeights[robot] = Mathf.Lerp(
-                _swerveWeights[robot],
-                _swerveHasLane[robot] ? 1f : 0f,
-                ease);
-            if (_swerveWeights[robot] <= 0.001f) return position;
-            if (_swerveLaneIsX[robot])
-                position.x = Mathf.Lerp(
-                    position.x, _swerveLanes[robot], _swerveWeights[robot]);
-            else
-                position.z = Mathf.Lerp(
-                    position.z, _swerveLanes[robot], _swerveWeights[robot]);
-            return position;
-        }
-
-        private void ResetSwerveState()
-        {
-            if (_swerveWeights == null) return;
-            for (int robot = 0; robot < _swerveWeights.Length; robot++)
-            {
-                _swerveWeights[robot] = 0f;
-                _swerveHasLane[robot] = false;
-            }
-        }
-
-        /// <summary>해당 셀에 지금 서 있는 주차 차량 pose — 고정 차량 + 아직
-        /// 들리지 않은 이동 대상 차량(LiftTick 전까지, 자기 대상 포함).</summary>
-        private bool TryGetParkedPose(
-            (int X, int Y) cell, float tick, out VehiclePose pose)
-        {
-            if (_fixedPoseByCell.TryGetValue(cell, out pose)) return true;
-            int vehicle;
-            if (_movableVehicleByCell.TryGetValue(cell, out vehicle))
-            {
-                PipelinedMissionV2 mission;
-                if (!_missions.TryGetValue(vehicle, out mission) ||
-                    tick < mission.LiftTick)
-                {
-                    pose = _problem.Slots[
-                        _problem.InitialVehicleSlots[vehicle]].Pose;
-                    return true;
-                }
-            }
-            pose = default(VehiclePose);
-            return false;
         }
 
         private int ServicePhase(int robot, float tick, out float progress)

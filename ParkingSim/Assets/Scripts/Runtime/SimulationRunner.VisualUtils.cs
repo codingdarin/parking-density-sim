@@ -48,25 +48,19 @@ namespace ParkingSim.Runtime
                 (pose.Y + second.Y) * 0.5f);
         }
 
-        private static Quaternion RobotVisualTargetRotation(
-            TimedRobotStateV2 from,
-            TimedRobotStateV2 to,
-            float fraction,
+        /// <summary>폴리라인 접선 방향의 유닛 회전 — 유닛은 전후 대칭이라
+        /// yaw를 (-90, 90]으로 접는다. 정지(미세 변위)면 현 회전 유지.</summary>
+        private static Quaternion PathHeadingRotation(
+            Vector2 from,
+            Vector2 to,
             Quaternion current)
         {
-            if (from.Carrying || to.Carrying)
-                return Quaternion.Lerp(
-                    RobotRotation(from),
-                    RobotRotation(to),
-                    fraction);
-
-            int dx = to.X - from.X;
-            int dy = to.Y - from.Y;
-            if (dx != 0)
-                return Quaternion.identity;
-            if (dy != 0)
-                return Quaternion.Euler(0f, 90f, 0f);
-            return current;
+            Vector2 delta = to - from;
+            if (delta.sqrMagnitude < 0.0004f) return current;
+            float yaw = -Mathf.Atan2(delta.y, delta.x) * Mathf.Rad2Deg;
+            if (yaw > 90f) yaw -= 180f;
+            else if (yaw <= -90f) yaw += 180f;
+            return Quaternion.Euler(0f, yaw, 0f);
         }
 
         private static Quaternion SmoothRobotRotation(

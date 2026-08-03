@@ -119,19 +119,13 @@ namespace ParkingSim.Runtime
         private SimulationVisualMode _visualMode =
             SimulationVisualMode.ThreeDimensional;
         private bool _paused;
-        /// <summary>주차(고정) 차량 pose의 셀 색인 — 하부 통과 스워브 보정용</summary>
+        /// <summary>주차(고정) 차량 pose의 셀 색인 — 경로 스무딩 레인 스냅용</summary>
         private readonly Dictionary<(int X, int Y), VehiclePose> _fixedPoseByCell =
             new Dictionary<(int X, int Y), VehiclePose>();
 
-        /// <summary>이동 대상 차량의 초기 pose 셀 색인 — 들리기 전까지 스워브 대상</summary>
+        /// <summary>이동 대상 차량의 초기 pose 셀 색인 — 들리기 전까지 스냅 대상</summary>
         private readonly Dictionary<(int X, int Y), int> _movableVehicleByCell =
             new Dictionary<(int X, int Y), int>();
-
-        /// <summary>로봇별 레인 핀 상태 — 관여도(0~1)·레인 좌표·축</summary>
-        private float[] _swerveWeights;
-        private float[] _swerveLanes;
-        private bool[] _swerveLaneIsX;
-        private bool[] _swerveHasLane;
 
         /// <summary>추적 카메라 가림 처리 대상(건물) — 유리 실루엣 전환용</summary>
         private sealed class OccluderEntry
@@ -400,6 +394,7 @@ namespace ParkingSim.Runtime
             BuildFixedCars();
             BuildMovableCars();
             BuildRobots();
+            BuildSmoothedPaths();
             SetupLighting();
             ApplyVisualMode();
             ApplyTick(0f);
