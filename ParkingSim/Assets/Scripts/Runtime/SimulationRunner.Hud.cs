@@ -12,13 +12,28 @@ namespace ParkingSim.Runtime
 {
     partial class SimulationRunner
     {
+        // F1~F4 HUD 숨김 상태 (녹화용) — Input.cs UiTogglePressed와 쌍
+        private bool _hideGuidePanel;
+        private bool _hidePlaybackBar;
+        private bool _hideReadinessPanel;
+        private bool _hideAllUi;
+
         private void OnGUI()
         {
-            DrawGuidePanel();
+            if (_hideAllUi) return;
+            if (!_hideGuidePanel) DrawGuidePanel();
             DrawControlPanel();
-            DrawReadinessPanel();
-            if (_plan != null) DrawPlaybackBar();
+            if (!_hideReadinessPanel) DrawReadinessPanel();
+            if (_plan != null && !_hidePlaybackBar) DrawPlaybackBar();
             if (_planningTask != null) DrawPlanningOverlay();
+        }
+
+        private void ApplyUiToggle(int uiToggleIndex)
+        {
+            if (uiToggleIndex == 0) _hideGuidePanel = !_hideGuidePanel;
+            else if (uiToggleIndex == 1) _hidePlaybackBar = !_hidePlaybackBar;
+            else if (uiToggleIndex == 2) _hideReadinessPanel = !_hideReadinessPanel;
+            else if (uiToggleIndex == 3) _hideAllUi = !_hideAllUi;
         }
 
         private void DrawGuidePanel()
@@ -73,7 +88,7 @@ namespace ParkingSim.Runtime
                 "• 화면 조작: WASD 이동 · 우클릭 드래그 회전 · 휠 확대/축소 · Shift 빠른 이동");
             GUI.Label(new Rect(24f, 238f, 596f, 20f),
                 "• 재생 조작: Space 일시정지/재생 · R 처음부터 · " +
-                "하단 재생바 = 역재생·구간 이동");
+                "F1~F4 UI 숨김(안내/재생바/관제보드/전체)");
         }
 
         private void DrawControlPanel()

@@ -73,15 +73,53 @@ namespace ParkingSim.Runtime
                 ControlPanelHeight);
         }
 
-        private static bool IsPointerOverHud(Vector2 screenPosition)
+        private bool IsPointerOverHud(Vector2 screenPosition)
         {
+            if (_hideAllUi) return false;
             Vector2 guiPosition = new Vector2(
                 screenPosition.x,
                 Screen.height - screenPosition.y);
-            return GuideBounds.Contains(guiPosition) ||
-                   ControlPanelBounds().Contains(guiPosition) ||
-                   ReadinessPanelBounds().Contains(guiPosition) ||
+            if (!_hideGuidePanel && GuideBounds.Contains(guiPosition)) return true;
+            if (ControlPanelBounds().Contains(guiPosition)) return true;
+            if (!_hideReadinessPanel &&
+                ReadinessPanelBounds().Contains(guiPosition)) return true;
+            return !_hidePlaybackBar &&
                    PlaybackBarBounds().Contains(guiPosition);
+        }
+
+        /// <summary>F1~F4 — HUD 숨김 토글 (녹화용).
+        /// 0 안내 패널, 1 재생바, 2 관제보드 패널, 3 전체 UI.</summary>
+        private static bool UiTogglePressed(out int uiToggleIndex)
+        {
+#if ENABLE_INPUT_SYSTEM
+            Keyboard keyboard = Keyboard.current;
+            if (keyboard != null)
+            {
+                if (keyboard.f1Key.wasPressedThisFrame) uiToggleIndex = 0;
+                else if (keyboard.f2Key.wasPressedThisFrame) uiToggleIndex = 1;
+                else if (keyboard.f3Key.wasPressedThisFrame) uiToggleIndex = 2;
+                else if (keyboard.f4Key.wasPressedThisFrame) uiToggleIndex = 3;
+                else
+                {
+                    uiToggleIndex = -1;
+                    return false;
+                }
+                return true;
+            }
+#elif ENABLE_LEGACY_INPUT_MANAGER
+            if (Input.GetKeyDown(KeyCode.F1)) uiToggleIndex = 0;
+            else if (Input.GetKeyDown(KeyCode.F2)) uiToggleIndex = 1;
+            else if (Input.GetKeyDown(KeyCode.F3)) uiToggleIndex = 2;
+            else if (Input.GetKeyDown(KeyCode.F4)) uiToggleIndex = 3;
+            else
+            {
+                uiToggleIndex = -1;
+                return false;
+            }
+            return true;
+#endif
+            uiToggleIndex = -1;
+            return false;
         }
 
         private static bool PauseTogglePressed()
