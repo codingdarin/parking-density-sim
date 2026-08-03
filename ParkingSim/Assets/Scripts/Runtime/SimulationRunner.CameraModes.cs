@@ -74,10 +74,15 @@ namespace ParkingSim.Runtime
             if (_ghostMaterial != null) return _ghostMaterial;
             _ghostMaterial = CreatePlumbobGlassMaterial();
             _ghostMaterial.name = "OccluderGhost";
-            Color tint = new Color(0.55f, 0.62f, 0.70f, 0.22f);
+            // 가림 유리는 플럼밥보다 훨씬 투명하게 — 광택을 낮춰 흰 번들거림 억제
+            Color tint = new Color(0.55f, 0.62f, 0.70f, 0.12f);
             _ghostMaterial.color = tint;
             if (_ghostMaterial.HasProperty("_BaseColor"))
                 _ghostMaterial.SetColor("_BaseColor", tint);
+            if (_ghostMaterial.HasProperty("_Smoothness"))
+                _ghostMaterial.SetFloat("_Smoothness", 0.55f);
+            if (_ghostMaterial.HasProperty("_Metallic"))
+                _ghostMaterial.SetFloat("_Metallic", 0f);
             return _ghostMaterial;
         }
 
