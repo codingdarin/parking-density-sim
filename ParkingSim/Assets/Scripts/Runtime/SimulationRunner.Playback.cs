@@ -390,7 +390,13 @@ namespace ParkingSim.Runtime
             int robot)
         {
             Vector3 target = Vector3.zero;
-            if (!a.Carrying && !b.Carrying)
+            if (a.Carrying || b.Carrying)
+            {
+                // 적재 중 유닛+차량은 강체 — 잔여 오프셋을 즉시 소거
+                if (_swerveOffsets != null && robot < _swerveOffsets.Length)
+                    _swerveOffsets[robot] = Vector3.zero;
+                return position;
+            }
             {
                 int travelX = Mathf.Abs(b.X - a.X);
                 int travelZ = Mathf.Abs(b.Y - a.Y);
@@ -406,7 +412,8 @@ namespace ParkingSim.Runtime
                             ? (cellX + step, cellZ)
                             : (cellX, cellZ + step);
                         VehiclePose pose;
-                        if (!TryGetParkedPose(cell, tick, out pose)) continue;
+                        if (!TryGetParkedPose(cell, tick, robot, out pose))
+                            continue;
                         bool carHorizontal =
                             pose.Orientation == VehicleOrientation.Horizontal;
                         // 차 축과 평행 이동은 좌우 바퀴 사이 통로라 보정 불요
@@ -451,15 +458,22 @@ namespace ParkingSim.Runtime
         /// <summary>해당 셀에 지금 서 있는 주차 차량 pose — 고정 차량 + 아직
         /// 들리지 않은 이동 대상 차량(자기 LiftTick 전까지)을 함께 본다.</summary>
         private bool TryGetParkedPose(
-            (int X, int Y) cell, float tick, out VehiclePose pose)
+            (int X, int Y) cell, float tick, int robot, out VehiclePose pose)
         {
             if (_fixedPoseByCell.TryGetValue(cell, out pose)) return true;
             int vehicle;
             if (_movableVehicleByCell.TryGetValue(cell, out vehicle))
             {
                 PipelinedMissionV2 mission;
-                if (!_missions.TryGetValue(vehicle, out mission) ||
-                    tick < mission.LiftTick)
+                bool hasMission = _missions.TryGetValue(vehicle, out mission);
+                // 자기 미션 대상 차량은 제외 — 도킹 블렌딩이 위치를 담당하므로
+                // 스워브까지 끼어들면 리프팅 직전 이중 움직임이 생긴다.
+                if (hasMission && mission.RobotIndex == robot)
+                {
+                    pose = default(VehiclePose);
+                    return false;
+                }
+                if (!hasMission || tick < mission.LiftTick)
                 {
                     pose = _problem.Slots[
                         _problem.InitialVehicleSlots[vehicle]].Pose;
