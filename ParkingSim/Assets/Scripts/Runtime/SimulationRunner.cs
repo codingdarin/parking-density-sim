@@ -131,6 +131,7 @@ namespace ParkingSim.Runtime
         private float[] _swerveWeights;
         private float[] _swerveLanes;
         private bool[] _swerveLaneIsX;
+        private bool[] _swerveHasLane;
 
         /// <summary>추적 카메라 가림 처리 대상(건물) — 유리 실루엣 전환용</summary>
         private sealed class OccluderEntry
