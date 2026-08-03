@@ -265,15 +265,45 @@ namespace ParkingSim.Runtime
                 FormatDuration(shownTick * perTickSeconds) + " / " +
                 FormatDuration(planSeconds) +
                 " (틱 " + Mathf.RoundToInt(shownTick) + "/" + _plan.Ticks + ")");
-            float soughtTick = GUI.HorizontalSlider(
-                new Rect(x, y + 34f, bar.width - 24f, 18f),
-                shownTick,
-                0f,
-                _plan.Ticks);
-            if (Mathf.Abs(soughtTick - shownTick) > 0.5f)
+            // 커스텀 시크 바 — 어두운 트랙 + 시안 채움 + 핸들 (기본 슬라이더
+            // 스킨은 회색이라 현재 지점이 안 보임). 클릭·드래그로 시점 이동.
+            Rect track = new Rect(x, y + 34f, bar.width - 24f, 18f);
+            GUI.Box(track, string.Empty);
+            GUI.Box(track, string.Empty);
+            float fraction = _plan.Ticks > 0
+                ? Mathf.Clamp01(shownTick / _plan.Ticks)
+                : 0f;
+            float innerWidth = track.width - 4f;
+            Color previousColor = GUI.color;
+            GUI.color = new Color(0.10f, 0.92f, 1f, 1f);
+            Rect fill = new Rect(
+                track.x + 2f,
+                track.y + 2f,
+                Mathf.Max(2f, innerWidth * fraction),
+                track.height - 4f);
+            GUI.Box(fill, string.Empty);
+            GUI.Box(fill, string.Empty);
+            GUI.Box(fill, string.Empty);
+            float handleX = track.x + 2f + innerWidth * fraction;
+            Rect handle = new Rect(
+                handleX - 4f, track.y - 3f, 8f, track.height + 6f);
+            GUI.Box(handle, string.Empty);
+            GUI.Box(handle, string.Empty);
+            GUI.color = previousColor;
+
+            Event current = Event.current;
+            Rect hitArea = new Rect(
+                track.x - 6f, track.y - 8f, track.width + 12f, track.height + 16f);
+            if ((current.type == EventType.MouseDown ||
+                 current.type == EventType.MouseDrag) &&
+                hitArea.Contains(current.mousePosition))
             {
-                _time = soughtTick * SecondsPerTick;
-                ApplyTick(soughtTick);
+                float sought = Mathf.Clamp01(
+                    (current.mousePosition.x - track.x - 2f) / innerWidth) *
+                    _plan.Ticks;
+                _time = sought * SecondsPerTick;
+                ApplyTick(sought);
+                current.Use();
             }
         }
 
