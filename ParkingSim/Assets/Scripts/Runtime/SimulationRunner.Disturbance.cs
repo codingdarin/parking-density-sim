@@ -59,8 +59,10 @@ namespace ParkingSim.Runtime
             }
             Vector3 point = ray.GetPoint(distance);
             cell = (Mathf.RoundToInt(point.x), Mathf.RoundToInt(point.z));
-            if (_complex == null ||
-                !_complex.BaseProblem.IsFloor(cell.X, cell.Y))
+            // 원본(무교란) floor 기준 — 봉쇄 반영본(_complex)으로 판정하면
+            // 이미 봉쇄된 셀이 도로가 아니게 되어 재클릭 해제가 불가능해진다
+            if (_pristineComplex == null ||
+                !_pristineComplex.BaseProblem.IsFloor(cell.X, cell.Y))
             {
                 failure = "(" + cell.X + "," + cell.Y + ")는 도로 셀이 아님";
                 return false;
@@ -92,19 +94,21 @@ namespace ParkingSim.Runtime
 
             // 쓰러진 나무 = 세로 2셀 (위 셀 우선, 막히면 아래 셀 폴백, 둘 다 불가면 1셀)
             (int X, int Y)[] segment;
-            if (_complex.BaseProblem.IsFloor(cell.X, cell.Y + 1))
+            if (_pristineComplex.BaseProblem.IsFloor(cell.X, cell.Y + 1))
                 segment = new[] { cell, (cell.X, cell.Y + 1) };
-            else if (_complex.BaseProblem.IsFloor(cell.X, cell.Y - 1))
+            else if (_pristineComplex.BaseProblem.IsFloor(cell.X, cell.Y - 1))
                 segment = new[] { (cell.X, cell.Y - 1), cell };
             else
                 segment = new[] { cell };
 
-            // 클릭 시점 즉시 검증 — 보호 셀·기존 봉쇄와의 충돌은 배치 자체를 거부
+            // 클릭 시점 즉시 검증 — 보호 셀·기존 봉쇄와의 충돌은 배치 자체를 거부.
+            // 누적 목록 전체를 원본에 재적용하므로 기준은 반드시 원본이어야 한다
+            // (봉쇄 반영본에 재적용하면 기존 봉쇄 셀이 튕겨 항상 거부됨)
             var candidate = new List<(int X, int Y)>(BlockedCellsSnapshot());
             candidate.AddRange(segment);
             DisturbedComplexBuildResultV2 probe =
                 ApartmentComplexDisturbanceV2.Apply(
-                    _complex,
+                    _pristineComplex,
                     new ComplexDisturbanceV2("배치 검증", candidate));
             if (!probe.Success)
             {

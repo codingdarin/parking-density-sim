@@ -14,17 +14,13 @@ namespace ParkingSim.Runtime
     {
         /// <summary>
         /// 관제보드 — 방재 담당자의 상시 질문 "지금 불나면 몇 분 만에 열리나".
-        /// 현재 조건(밀도·진입구·가용 유닛)으로 8개 동 전수의 예상 개통시간을
+        /// 현재 조건(밀도·진입구·가용 유닛)으로 전 동의 예상 개통시간을
         /// 백그라운드에서 재계산해 상시 표시한다. 조건이 바뀌면 자동 재계산.
         /// </summary>
         private sealed class ReadinessBoard
         {
-            public SiteScenarioKind Kind;
-            public int BlockingVehicleCount;
-            public bool IncludeSecondaryEntrances;
-            public int AvailableUnitCount;
-            public string BlockedSignature;
-            public string DisturbanceFailure;
+            public string Signature;
+            public string Failure;
             public List<ApartmentComplexDensityTrialV2> Rows;
         }
 
@@ -35,6 +31,16 @@ namespace ParkingSim.Runtime
         private int _availableUnitCount = 4;
         private Task<ReadinessBoard> _readinessTask;
         private ReadinessBoard _readinessBoard;
+        /// <summary>조건 서명 → 완료 보드 캐시. 계산이 결정론(같은 조건 → 같은 결과)이라
+        /// 시나리오·밀도를 되돌릴 때 재계산 없이 즉시 표시한다. 실패 결과도 캐시해
+        /// 같은 조건을 끝없이 다시 계산하는 루프를 막는다. 조건 조합 수가 유한해
+        /// 캐시 크기는 실질적으로 제한된다.</summary>
+        private readonly Dictionary<string, ReadinessBoard> _readinessCache =
+            new Dictionary<string, ReadinessBoard>();
+        /// <summary>계산 중 동별 점진 표시용 — 태스크 스레드가 잠금 하에 행을 추가한다.</summary>
+        private readonly List<ApartmentComplexDensityTrialV2> _readinessPartial =
+            new List<ApartmentComplexDensityTrialV2>();
+        private string _readinessTaskSignature;
 
         private static Rect ReadinessPanelBounds()
         {
@@ -47,7 +53,14 @@ namespace ParkingSim.Runtime
                 ReadinessPanelHeight);
         }
 
-        /// <summary>Update에서 매 프레임 호출 — 완료 회수와 재계산 트리거를 겸한다.</summary>
+        private string ReadinessSignature()
+        {
+            return _scenarioKind + "|" + _blockingVehicleCount + "|" +
+                   _includeSecondaryEntrances + "|" + _availableUnitCount + "|" +
+                   BlockedCellsSignature();
+        }
+
+        /// <summary>Update에서 매 프레임 호출 — 완료 회수·캐시 조회·재계산 트리거를 겸한다.</summary>
         private void UpdateReadinessBoard()
         {
             if (_readinessTask != null)
@@ -57,30 +70,39 @@ namespace ParkingSim.Runtime
                 _readinessTask = null;
                 if (completed.IsFaulted || completed.IsCanceled)
                 {
-                    Debug.LogWarning("[Model V2] 관제보드 계산 실패: " +
-                        (completed.Exception == null
-                            ? "취소됨"
-                            : completed.Exception.GetBaseException().Message));
+                    string reason = completed.Exception == null
+                        ? "취소됨"
+                        : completed.Exception.GetBaseException().Message;
+                    Debug.LogWarning("[Model V2] 관제보드 계산 실패: " + reason);
+                    var failed = new ReadinessBoard
+                    {
+                        Signature = _readinessTaskSignature,
+                        Failure = "계산 실패: " + reason,
+                    };
+                    _readinessCache[failed.Signature] = failed;
+                    _readinessBoard = failed;
                 }
                 else
                 {
                     _readinessBoard = completed.Result;
+                    _readinessCache[completed.Result.Signature] = completed.Result;
                 }
             }
             if (_timeProfile == null) return;
             if (ReadinessBoardCurrent()) return;
+            ReadinessBoard cached;
+            if (_readinessCache.TryGetValue(ReadinessSignature(), out cached))
+            {
+                _readinessBoard = cached;
+                return;
+            }
             StartReadinessTask();
         }
 
         private bool ReadinessBoardCurrent()
         {
             return _readinessBoard != null &&
-                   _readinessBoard.Kind == _scenarioKind &&
-                   _readinessBoard.BlockingVehicleCount == _blockingVehicleCount &&
-                   _readinessBoard.IncludeSecondaryEntrances ==
-                       _includeSecondaryEntrances &&
-                   _readinessBoard.AvailableUnitCount == _availableUnitCount &&
-                   _readinessBoard.BlockedSignature == BlockedCellsSignature();
+                   _readinessBoard.Signature == ReadinessSignature();
         }
 
         private void StartReadinessTask()
@@ -90,8 +112,10 @@ namespace ParkingSim.Runtime
             int availableUnitCount = _availableUnitCount;
             SiteScenarioKind kind = _scenarioKind;
             IReadOnlyList<(int X, int Y)> blockedCells = BlockedCellsSnapshot();
-            string blockedSignature = BlockedCellsSignature();
+            string signature = ReadinessSignature();
             PhysicalTimeProfileV2 profile = _timeProfile;
+            lock (_readinessPartial) _readinessPartial.Clear();
+            _readinessTaskSignature = signature;
             _readinessTask = Task.Run(() =>
             {
                 ApartmentComplexScenarioV2 complex = BuildScenario(
@@ -105,12 +129,8 @@ namespace ParkingSim.Runtime
                     if (!disturbed.Success)
                         return new ReadinessBoard
                         {
-                            Kind = kind,
-                            BlockingVehicleCount = blockingVehicleCount,
-                            IncludeSecondaryEntrances = includeSecondaryEntrances,
-                            AvailableUnitCount = availableUnitCount,
-                            BlockedSignature = blockedSignature,
-                            DisturbanceFailure = disturbed.FailReason,
+                            Signature = signature,
+                            Failure = "교란 적용 불가: " + disturbed.FailReason,
                         };
                     complex = disturbed.Scenario;
                 }
@@ -127,19 +147,20 @@ namespace ParkingSim.Runtime
                     enableLowerBoundPruning: true);
                 var rows = new List<ApartmentComplexDensityTrialV2>();
                 foreach (ApartmentBuildingV2 building in complex.Buildings)
-                    rows.Add(ApartmentComplexDensitySweepV2.Evaluate(
-                        complex,
-                        session,
-                        building.Id,
-                        includeSecondaryEntrances,
-                        profile));
+                {
+                    ApartmentComplexDensityTrialV2 row =
+                        ApartmentComplexDensitySweepV2.Evaluate(
+                            complex,
+                            session,
+                            building.Id,
+                            includeSecondaryEntrances,
+                            profile);
+                    rows.Add(row);
+                    lock (_readinessPartial) _readinessPartial.Add(row);
+                }
                 return new ReadinessBoard
                 {
-                    Kind = kind,
-                    BlockingVehicleCount = blockingVehicleCount,
-                    IncludeSecondaryEntrances = includeSecondaryEntrances,
-                    AvailableUnitCount = availableUnitCount,
-                    BlockedSignature = blockedSignature,
+                    Signature = signature,
                     Rows = rows,
                 };
             });
@@ -163,6 +184,22 @@ namespace ParkingSim.Runtime
                     : ""));
             y += 22f;
             bool stale = !ReadinessBoardCurrent();
+            List<ApartmentComplexDensityTrialV2> partial = null;
+            if (stale && _readinessTask != null &&
+                _readinessTaskSignature == ReadinessSignature())
+                lock (_readinessPartial)
+                    partial = new List<ApartmentComplexDensityTrialV2>(
+                        _readinessPartial);
+            if (stale && partial != null)
+            {
+                // 계산 중 — 완료된 동부터 점진 표시
+                GUI.Label(new Rect(x, y, 260f, 20f),
+                    "동별 계산 중… (완료 " + partial.Count + "동)");
+                y += 20f;
+                int partialSafe;
+                DrawReadinessRows(partial, x, y, out partialSafe);
+                return;
+            }
             if (_readinessBoard == null)
             {
                 GUI.Label(new Rect(x, y, 260f, 20f), "동별 대응력 계산 중…");
@@ -176,14 +213,33 @@ namespace ParkingSim.Runtime
             }
             if (_readinessBoard.Rows == null)
             {
-                GUI.Label(new Rect(x, y, 260f, 40f),
-                    "교란 적용 불가: " + _readinessBoard.DisturbanceFailure);
+                GUI.Label(new Rect(x, y, 260f, 40f), _readinessBoard.Failure);
                 return;
             }
+            int safeCount;
+            y = DrawReadinessRows(_readinessBoard.Rows, x, y, out safeCount);
+            y += 4f;
+            GUI.Label(new Rect(x, y, 260f, 20f),
+                _readinessBoard.Rows.Count + "동 중 " + safeCount + "동 7분 이내" +
+                (safeCount == _readinessBoard.Rows.Count
+                    ? " — 전 동 대응 가능"
+                    : " — 취약 동 존재"));
+            y += 20f;
+            GUI.Label(new Rect(x, y, 260f, 20f),
+                _availableUnitCount >= 4
+                    ? "예비 유닛 없음 — 1대 이탈 시 재확인 필요"
+                    : "유닛 이탈 상태 — 충전·고장 복귀 필요");
+        }
 
+        private float DrawReadinessRows(
+            List<ApartmentComplexDensityTrialV2> rows,
+            float x,
+            float y,
+            out int safeCount)
+        {
             Color previousColor = GUI.color;
-            int safeCount = 0;
-            foreach (ApartmentComplexDensityTrialV2 row in _readinessBoard.Rows)
+            safeCount = 0;
+            foreach (ApartmentComplexDensityTrialV2 row in rows)
             {
                 string text;
                 Color color;
@@ -211,17 +267,7 @@ namespace ParkingSim.Runtime
                 y += 20f;
             }
             GUI.color = previousColor;
-            y += 4f;
-            GUI.Label(new Rect(x, y, 260f, 20f),
-                _readinessBoard.Rows.Count + "동 중 " + safeCount + "동 7분 이내" +
-                (safeCount == _readinessBoard.Rows.Count
-                    ? " — 전 동 대응 가능"
-                    : " — 취약 동 존재"));
-            y += 20f;
-            GUI.Label(new Rect(x, y, 260f, 20f),
-                _availableUnitCount >= 4
-                    ? "예비 유닛 없음 — 1대 이탈 시 재확인 필요"
-                    : "유닛 이탈 상태 — 충전·고장 복귀 필요");
+            return y;
         }
     }
 }
