@@ -37,6 +37,8 @@ namespace ParkingSim.Runtime
             public int BlockingVehicleCount;
             public bool IncludeSecondaryEntrances;
             public ApartmentComplexScenarioV2 Complex;
+            /// <summary>교란(봉쇄) 적용 전 원본 — 봉쇄 클릭 해석·배치 검증 기준</summary>
+            public ApartmentComplexScenarioV2 PristineComplex;
             public ApartmentComplexPlanResultV2 ComplexPlan;
             public string DisturbanceFailure;
             public SiteScenarioKind Kind;
@@ -61,6 +63,9 @@ namespace ParkingSim.Runtime
         private EmergencyProblemV2 _problem;
         private PipelinedPlanResultV2 _plan;
         private ApartmentComplexScenarioV2 _complex;
+        /// <summary>교란(봉쇄) 미적용 원본 시나리오 — _complex는 봉쇄가 반영된
+        /// 재생용이므로, 봉쇄 셀 해석·누적 봉쇄 재검증은 반드시 이쪽 기준</summary>
+        private ApartmentComplexScenarioV2 _pristineComplex;
         private ApartmentBuildingV2 _fireBuilding;
         private ApartmentComplexEntranceV2 _selectedEntrance;
         private PhysicalTimeProfileV2 _timeProfile;
@@ -204,6 +209,7 @@ namespace ParkingSim.Runtime
         private void BuildScenarioPreview(ApartmentComplexScenarioV2 complex)
         {
             _complex = complex;
+            _pristineComplex = complex;
             _problem = complex.BaseProblem;
             RebuildFixedPoseIndex();
             _plan = null;
@@ -256,8 +262,9 @@ namespace ParkingSim.Runtime
                 "대 대응 계획 수립 중";
             _planningTask = Task.Run(() =>
             {
-                ApartmentComplexScenarioV2 complex =
+                ApartmentComplexScenarioV2 pristine =
                     BuildScenario(kind, blockingVehicleCount, timing);
+                ApartmentComplexScenarioV2 complex = pristine;
                 if (blockedCells.Count > 0)
                 {
                     DisturbedComplexBuildResultV2 disturbed =
@@ -295,6 +302,7 @@ namespace ParkingSim.Runtime
                     BlockingVehicleCount = blockingVehicleCount,
                     IncludeSecondaryEntrances = includeSecondaryEntrances,
                     Complex = complex,
+                    PristineComplex = pristine,
                     ComplexPlan = complexPlan,
                     Kind = kind,
                 };
@@ -341,6 +349,7 @@ namespace ParkingSim.Runtime
             _requestedBlockingVehicleCount = _blockingVehicleCount;
             _includeSecondaryEntrances = prepared.IncludeSecondaryEntrances;
             _complex = prepared.Complex;
+            _pristineComplex = prepared.PristineComplex;
             AutomaticEmergencyAccessPlanResultV2 automatic =
                 complexPlan.Selected.AutomaticPlan;
             EmergencyScenarioBuildResultV2 built = automatic.Plan.Selected.Scenario;
