@@ -436,6 +436,8 @@ namespace ParkingSim.Runtime
                 _time = 0f;
                 ApplyTick(0f);
             }
+            int uiToggle;
+            if (UiTogglePressed(out uiToggle)) ApplyUiToggle(uiToggle);
             Vector2 pointerPosition;
             if (PointerPressed(out pointerPosition) &&
                 !IsPointerOverHud(pointerPosition) &&
