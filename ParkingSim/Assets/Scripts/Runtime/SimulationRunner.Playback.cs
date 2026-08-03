@@ -232,20 +232,23 @@ namespace ParkingSim.Runtime
             float pickupStart = mission.LiftTick - _problem.Timing.LiftServiceTicks;
             if (tick >= pickupStart && tick < mission.LiftTick)
             {
+                // 상승은 앞 55%에 압축 — 부채 접힘(0~85%)이 진행되는 동안
+                // 타이어가 이미 떠 있어 클램핑 암과 바퀴가 겹치지 않는다
                 float progress = Mathf.InverseLerp(pickupStart, mission.LiftTick, tick);
                 return Mathf.SmoothStep(
                     parkedHeight,
                     carriedHeight,
-                    progress);
+                    Mathf.Clamp01(progress / 0.55f));
             }
             float releaseStart = mission.DropTick - _problem.Timing.DropServiceTicks;
             if (tick >= releaseStart && tick < mission.DropTick)
             {
+                // 하강은 뒤 55%에 — 팔이 먼저 펴진 뒤 내려놓는 역순 미러
                 float progress = Mathf.InverseLerp(releaseStart, mission.DropTick, tick);
                 return Mathf.SmoothStep(
                     carriedHeight,
                     parkedHeight,
-                    progress);
+                    Mathf.Clamp01((progress - 0.45f) / 0.55f));
             }
             return tick >= mission.LiftTick && tick < mission.DropTick
                 ? carriedHeight
@@ -313,17 +316,19 @@ namespace ParkingSim.Runtime
                     0f,
                     1f,
                     Mathf.Clamp01(progress / 0.85f));
+                // 덱은 차량 상승(앞 55%)과 동기
                 deckAmount = Mathf.SmoothStep(
                     0f,
                     1f,
-                    Mathf.Clamp01((progress - 0.42f) / 0.58f));
+                    Mathf.Clamp01(progress / 0.55f));
             }
             else if (phase == 2)
             {
+                // 하강은 뒤 55% — 차량 하강과 동기
                 deckAmount = 1f - Mathf.SmoothStep(
                     0f,
                     1f,
-                    Mathf.Clamp01(progress / 0.58f));
+                    Mathf.Clamp01((progress - 0.45f) / 0.55f));
                 armAmount = 1f - Mathf.SmoothStep(
                     0f,
                     1f,
