@@ -481,9 +481,21 @@ namespace ParkingSim.Runtime
             // 재생은 무상태(틱 → 순수 렌더)라 역재생·임의 시점 점프가 안전하다.
             float cycleSeconds = (_plan.Ticks + EndHoldTicks) * SecondsPerTick;
             if (!_paused)
-                _time = Mathf.Repeat(
-                    _time + Time.deltaTime * _playbackDirection * _playbackSpeed,
-                    cycleSeconds);
+            {
+                float next = _time +
+                    Time.deltaTime * _playbackDirection * _playbackSpeed;
+                if (_playbackDirection < 0f && next <= 0f)
+                {
+                    // 역재생이 0에 닿으면 끝으로 순환하지 않고 정지 —
+                    // "0초 시크 직후 끝 지점이 보이는" 혼란 방지
+                    _time = 0f;
+                    _paused = true;
+                }
+                else
+                {
+                    _time = Mathf.Repeat(next, cycleSeconds);
+                }
+            }
             float tick = _time / SecondsPerTick;
             ApplyTick(Mathf.Min(tick, _plan.Ticks));
             UpdateTrackingOcclusion();

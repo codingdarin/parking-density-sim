@@ -292,12 +292,31 @@ namespace ParkingSim.Runtime
                 handle, Texture2D.whiteTexture, ScaleMode.StretchToFill,
                 false, 0f, Color.white, 0f, 3f);
 
+            // 좌클릭 + 바에서 시작한 드래그만 시크로 인정 — 우클릭 카메라 회전이나
+            // 다른 곳에서 시작한 드래그가 바를 스치며 몰래 시크되는 것을 차단
             Event current = Event.current;
             Rect hitArea = new Rect(
                 track.x - 6f, track.y - 8f, track.width + 12f, track.height + 16f);
-            if ((current.type == EventType.MouseDown ||
-                 current.type == EventType.MouseDrag) &&
+            bool seek = false;
+            if (current.type == EventType.MouseDown &&
+                current.button == 0 &&
                 hitArea.Contains(current.mousePosition))
+            {
+                _seekDragging = true;
+                seek = true;
+            }
+            else if (current.type == EventType.MouseDrag &&
+                     current.button == 0 &&
+                     _seekDragging)
+            {
+                seek = true;
+            }
+            else if (current.type == EventType.MouseUp && _seekDragging)
+            {
+                _seekDragging = false;
+                current.Use();
+            }
+            if (seek)
             {
                 float sought = Mathf.Clamp01(
                     (current.mousePosition.x - track.x - 2f) / innerWidth) *
@@ -307,6 +326,9 @@ namespace ParkingSim.Runtime
                 current.Use();
             }
         }
+
+        /// <summary>시크 드래그가 재생바에서 시작됐는지 — 스침 시크 방지</summary>
+        private bool _seekDragging;
 
         private static bool DrawActionButton(
             Rect rect,
