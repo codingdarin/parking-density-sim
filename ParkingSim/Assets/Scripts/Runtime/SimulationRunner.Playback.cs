@@ -24,6 +24,11 @@ namespace ParkingSim.Runtime
 
         private void ApplyTick(float timelineTick)
         {
+            // 시간 불연속(시크·순환) 감지 — 스워브 히스테리시스는 연속 재생
+            // 전제라, 점프 후엔 지난 문맥의 레인 핀이 유령 변위를 만든다
+            // (정지 상태에선 해제 조건이 발동하지 않아 영구 잔류)
+            if (Mathf.Abs(timelineTick - _displayTick) > 1.5f)
+                ResetSwerveState();
             _displayTick = timelineTick;
             int aTick = Mathf.Clamp(Mathf.FloorToInt(timelineTick), 0, _plan.Ticks);
             int bTick = Mathf.Min(aTick + 1, _plan.Ticks);
@@ -457,6 +462,16 @@ namespace ParkingSim.Runtime
                 position.z = Mathf.Lerp(
                     position.z, _swerveLanes[robot], _swerveWeights[robot]);
             return position;
+        }
+
+        private void ResetSwerveState()
+        {
+            if (_swerveWeights == null) return;
+            for (int robot = 0; robot < _swerveWeights.Length; robot++)
+            {
+                _swerveWeights[robot] = 0f;
+                _swerveHasLane[robot] = false;
+            }
         }
 
         /// <summary>해당 셀에 지금 서 있는 주차 차량 pose — 고정 차량 + 아직
