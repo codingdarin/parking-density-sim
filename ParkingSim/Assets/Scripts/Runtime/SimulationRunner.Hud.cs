@@ -80,6 +80,12 @@ namespace ParkingSim.Runtime
             GUI.Box(panel, string.Empty);
             float x = panel.x + 12f;
             float y = panel.y + 10f;
+            GUI.Label(new Rect(x, y, 260f, 22f), "단지 시나리오");
+            y += 24f;
+            DrawScenarioButtons(
+                x, y, _planningTask == null && _timeProfile != null);
+
+            y += 42f;
             GUI.Label(new Rect(x, y, 260f, 22f), "화면 보기");
             y += 24f;
             if (DrawActionButton(
@@ -113,13 +119,13 @@ namespace ParkingSim.Runtime
                     "서문만 사용",
                     !shownSecondary,
                     canReplan))
-                BeginPresetLoad(0, _fireBuildingId, _blockingVehicleCount);
+                BeginPresetLoad(0, _fireBuildingId, _blockingVehicleCount, _scenarioKind);
             if (DrawActionButton(
                     new Rect(x + 132f, y, 124f, 32f),
                     "서문·동문 비교",
                     shownSecondary,
                     canReplan))
-                BeginPresetLoad(1, _fireBuildingId, _blockingVehicleCount);
+                BeginPresetLoad(1, _fireBuildingId, _blockingVehicleCount, _scenarioKind);
 
             y += 42f;
             GUI.Label(new Rect(x, y, 260f, 22f), "도로 주차 차량");
@@ -130,8 +136,10 @@ namespace ParkingSim.Runtime
                 new Rect(x, y + 4f, 196f, 20f),
                 _requestedBlockingVehicleCount,
                 0f,
-                ApartmentComplexScenarioFactoryV2.MaximumBlockingVehicles);
-            _requestedBlockingVehicleCount = Mathf.RoundToInt(selectedDensity);
+                MaxVariableVehicles(_scenarioKind));
+            _requestedBlockingVehicleCount = Mathf.Min(
+                Mathf.RoundToInt(selectedDensity),
+                MaxVariableVehicles(_scenarioKind));
             GUI.enabled = previousEnabled;
             GUI.Label(
                 new Rect(x + 204f, y, 52f, 22f),
@@ -150,7 +158,8 @@ namespace ParkingSim.Runtime
                 BeginPresetLoad(
                     _includeSecondaryEntrances ? 1 : 0,
                     _fireBuildingId,
-                    _requestedBlockingVehicleCount);
+                    _requestedBlockingVehicleCount,
+                    _scenarioKind);
 
             y += 40f;
             GUI.Label(new Rect(x, y, 260f, 22f), "가용 운송 유닛 (충전·고장 이탈)");
@@ -168,7 +177,8 @@ namespace ParkingSim.Runtime
                     BeginPresetLoad(
                         _includeSecondaryEntrances ? 1 : 0,
                         _fireBuildingId,
-                        _blockingVehicleCount);
+                        _blockingVehicleCount,
+                        _scenarioKind);
                 }
             }
 
