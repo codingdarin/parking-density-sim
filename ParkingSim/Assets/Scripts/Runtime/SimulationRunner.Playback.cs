@@ -51,15 +51,10 @@ namespace ParkingSim.Runtime
                             0f,
                             1f,
                             Mathf.Clamp01((serviceProgress - 0.85f) / 0.15f));
-                    Vector3 naturalPosition = ApplyUnderCarSwerve(
-                        Vector3.Lerp(
-                            RobotPosition(a, _robotUsesCustomView[robot]),
-                            RobotPosition(b, _robotUsesCustomView[robot]),
-                            fraction),
-                        a,
-                        b,
-                        timelineTick,
-                        robot);
+                    Vector3 naturalPosition = Vector3.Lerp(
+                        RobotPosition(a, _robotUsesCustomView[robot]),
+                        RobotPosition(b, _robotUsesCustomView[robot]),
+                        fraction);
                     _robotViews[robot].transform.position = Vector3.Lerp(
                         naturalPosition,
                         RobotPosition(servicePose, _robotUsesCustomView[robot]),
@@ -71,15 +66,10 @@ namespace ParkingSim.Runtime
                 }
                 else
                 {
-                    _robotViews[robot].transform.position = ApplyUnderCarSwerve(
-                        Vector3.Lerp(
-                            RobotPosition(a, _robotUsesCustomView[robot]),
-                            RobotPosition(b, _robotUsesCustomView[robot]),
-                            fraction),
-                        a,
-                        b,
-                        timelineTick,
-                        robot);
+                    _robotViews[robot].transform.position = Vector3.Lerp(
+                        RobotPosition(a, _robotUsesCustomView[robot]),
+                        RobotPosition(b, _robotUsesCustomView[robot]),
+                        fraction);
                     _robotViews[robot].transform.rotation =
                         SmoothRobotRotation(
                             _robotViews[robot].transform.rotation,
