@@ -86,6 +86,12 @@ namespace ParkingSim.Runtime
         /// 틴트는 SetTrackingFrameColor가 알파를 보존하며 입힌다.</summary>
         private static Material CreatePlumbobGlassMaterial()
         {
+            // 플레이어 빌드는 자산이 쓰는 셰이더 변형만 포함하므로, 런타임 생성만으로는
+            // URP Lit 투명 변형이 스트리핑돼 색이 무너진다. Resources의 투명 재질
+            // 자산을 원본으로 복제해 에디터·빌드가 같은 변형을 쓰게 한다.
+            Material template =
+                Resources.Load<Material>("ParkingSim/Effects/PlumbobGlass");
+            if (template != null) return new Material(template);
             Shader shader = Shader.Find("Universal Render Pipeline/Lit");
             if (shader == null) shader = Shader.Find("Standard");
             Material material = new Material(shader);
