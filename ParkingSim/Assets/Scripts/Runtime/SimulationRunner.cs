@@ -119,6 +119,8 @@ namespace ParkingSim.Runtime
         private SimulationVisualMode _visualMode =
             SimulationVisualMode.ThreeDimensional;
         private bool _paused;
+        /// <summary>재생 방향 — +1 정방향, -1 역재생</summary>
+        private float _playbackDirection = 1f;
         private float _displayTick;
         private float _time;
         private Task<PreparedScenario> _planningTask;
@@ -128,7 +130,7 @@ namespace ParkingSim.Runtime
         private float _planningStartedAt;
         private static readonly Rect GuideBounds = new Rect(12f, 12f, 620f, 260f);
         private const float ControlPanelWidth = 286f;
-        private const float ControlPanelHeight = 500f;
+        private const float ControlPanelHeight = 434f;
 
         private void Start()
         {
@@ -424,9 +426,13 @@ namespace ParkingSim.Runtime
                 ApplyThreeDimensionalLabelFacing();
                 return;
             }
-            if (!_paused) _time += Time.deltaTime;
-            float cycle = _plan.Ticks + EndHoldTicks;
-            float tick = (_time / SecondsPerTick) % cycle;
+            // 재생은 무상태(틱 → 순수 렌더)라 역재생·임의 시점 점프가 안전하다.
+            float cycleSeconds = (_plan.Ticks + EndHoldTicks) * SecondsPerTick;
+            if (!_paused)
+                _time = Mathf.Repeat(
+                    _time + Time.deltaTime * _playbackDirection,
+                    cycleSeconds);
+            float tick = _time / SecondsPerTick;
             ApplyTick(Mathf.Min(tick, _plan.Ticks));
             AnimateFireMarker();
             UpdateCameraNavigation();
