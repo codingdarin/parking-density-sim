@@ -17,6 +17,7 @@ namespace ParkingSim.Runtime
             DrawGuidePanel();
             DrawControlPanel();
             DrawReadinessPanel();
+            if (_plan != null) DrawPlaybackBar();
             if (_planningTask != null) DrawPlanningOverlay();
         }
 
@@ -71,7 +72,8 @@ namespace ParkingSim.Runtime
             GUI.Label(new Rect(24f, 214f, 596f, 24f),
                 "• 화면 조작: WASD 이동 · 우클릭 드래그 회전 · 휠 확대/축소 · Shift 빠른 이동");
             GUI.Label(new Rect(24f, 238f, 596f, 20f),
-                "• 재생 조작: Space 일시정지/재생 · R 처음부터");
+                "• 재생 조작: Space 일시정지/재생 · R 처음부터 · " +
+                "하단 재생바 = 역재생·구간 이동");
         }
 
         private void DrawControlPanel()
@@ -198,24 +200,72 @@ namespace ParkingSim.Runtime
                     canReplan && _blockageSegments.Count > 0))
                 ClearBlockages();
 
-            y += 42f;
-            GUI.Label(new Rect(x, y, 260f, 22f), "재생 제어");
-            y += 24f;
-            bool canPlayback = _plan != null;
+        }
+
+        private static Rect PlaybackBarBounds()
+        {
+            float width = Mathf.Min(760f, Screen.width - 40f);
+            return new Rect(
+                (Screen.width - width) / 2f,
+                Screen.height - 76f,
+                width,
+                64f);
+        }
+
+        /// <summary>하단 재생바 — 역재생/일시정지/재생 + 시점 이동 슬라이더.
+        /// 재생이 무상태(틱 → 순수 렌더)라 임의 시점 점프·역재생이 안전하다.</summary>
+        private void DrawPlaybackBar()
+        {
+            Rect bar = PlaybackBarBounds();
+            GUI.Box(bar, string.Empty);
+            GUI.Box(bar, string.Empty);
+            float x = bar.x + 12f;
+            float y = bar.y + 6f;
+            bool reversePlaying = !_paused && _playbackDirection < 0f;
+            bool forwardPlaying = !_paused && _playbackDirection > 0f;
             if (DrawActionButton(
-                    new Rect(x, y, 124f, 32f),
-                    _paused ? "재생" : "일시정지",
-                    _paused,
-                    canPlayback))
-                _paused = !_paused;
-            if (DrawActionButton(
-                    new Rect(x + 132f, y, 124f, 32f),
-                    "처음부터",
-                    false,
-                    canPlayback))
+                    new Rect(x, y, 88f, 26f),
+                    "◀ 역재생",
+                    reversePlaying,
+                    !reversePlaying))
             {
-                _time = 0f;
-                ApplyTick(0f);
+                _playbackDirection = -1f;
+                _paused = false;
+            }
+            if (DrawActionButton(
+                    new Rect(x + 94f, y, 88f, 26f),
+                    "∥ 정지",
+                    _paused,
+                    !_paused))
+                _paused = true;
+            if (DrawActionButton(
+                    new Rect(x + 188f, y, 88f, 26f),
+                    "▶ 재생",
+                    forwardPlaying,
+                    !forwardPlaying))
+            {
+                _playbackDirection = 1f;
+                _paused = false;
+            }
+            double planSeconds = _timeProfile.PlanSeconds(_plan.Ticks);
+            double perTickSeconds = _plan.Ticks > 0
+                ? planSeconds / _plan.Ticks
+                : 0.0;
+            float shownTick = Mathf.Min(_displayTick, _plan.Ticks);
+            GUI.Label(
+                new Rect(x + 288f, y + 3f, bar.width - 302f, 22f),
+                FormatDuration(shownTick * perTickSeconds) + " / " +
+                FormatDuration(planSeconds) +
+                "  (틱 " + Mathf.RoundToInt(shownTick) + "/" + _plan.Ticks + ")");
+            float soughtTick = GUI.HorizontalSlider(
+                new Rect(x, y + 34f, bar.width - 24f, 18f),
+                shownTick,
+                0f,
+                _plan.Ticks);
+            if (Mathf.Abs(soughtTick - shownTick) > 0.5f)
+            {
+                _time = soughtTick * SecondsPerTick;
+                ApplyTick(soughtTick);
             }
         }
 
