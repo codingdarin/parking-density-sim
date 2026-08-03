@@ -8,7 +8,7 @@ namespace ParkingSim.Tests
 {
     public static class ModelV2Tests
     {
-        public const int ExpectedGateCount = 77;
+        public const int ExpectedGateCount = 78;
 
         public static int RunAll()
         {
@@ -87,6 +87,7 @@ namespace ParkingSim.Tests
             passed += Run("72 핸드오버 재현성 — 동일 입력 동일 결과", TestHandoverReproducibility);
             passed += Run("76 핸드오버 정차 간섭 — 정차 유닛 셀 통행 불가", TestHandoverParkedInterference);
             passed += Run("77 단지A 간선 재지정 — 종축 전용구역·저이동 개통", TestSiteAArterialZone);
+            passed += Run("78 병렬성 진단 — 로봇-틱 4분해 보존·재현", TestPlanUtilization);
             passed += Run("73 단지A 기하 — 만차 배경·전용구역·밀도 보존", TestSiteAGeometry);
             passed += Run("74 단지A 평가 — 배경 주차열 이동 필수·재현", TestSiteAEvaluation);
             passed += Run("75 단지A 적치 반사실 — 재배치·확장 기하와 재현", TestSiteAStagingCounterfactual);
@@ -2119,6 +2120,35 @@ namespace ParkingSim.Tests
                    again.Selected.AutomaticPlan.Plan.Selected.Plan.Ticks ==
                    repeat.Selected.AutomaticPlan.Plan.Selected.Plan.Ticks,
                 "간선 재지정 결과가 재현되지 않음");
+        }
+
+        private static void TestPlanUtilization()
+        {
+            (EmergencyProblemV2 problem, PipelinedPlanResultV2 plan) =
+                BatteryGateFixture();
+            PlanUtilizationReportV2 first =
+                PlanUtilizationV2.Analyze(problem, plan);
+            PlanUtilizationReportV2 second =
+                PlanUtilizationV2.Analyze(problem, plan);
+            int lift = problem.Timing.LiftServiceTicks;
+            int drop = problem.Timing.DropServiceTicks;
+            for (int robot = 0; robot < first.RobotCount; robot++)
+            {
+                Assert(first.MoveTicks[robot] + first.ServiceTicks[robot] +
+                       first.WaitTicks[robot] + first.IdleTicks[robot] ==
+                       first.Makespan,
+                    $"유닛{robot} 로봇-틱 4분해 합이 makespan과 다름");
+                int missions = plan.Missions.Count(m => m.RobotIndex == robot);
+                Assert(first.ServiceTicks[robot] == missions * (lift + drop),
+                    $"유닛{robot} 서비스틱이 미션 수 × 서비스틱과 다름");
+                Assert(first.MoveTicks[robot] == second.MoveTicks[robot] &&
+                       first.WaitTicks[robot] == second.WaitTicks[robot] &&
+                       first.IdleTicks[robot] == second.IdleTicks[robot],
+                    "로봇-틱 분해가 재현되지 않음");
+            }
+            Assert(first.EffectiveParallelism > 0.0 &&
+                   first.EffectiveParallelism <= first.RobotCount + 1e-9,
+                "유효 병렬성이 (0, 조수] 범위를 벗어남");
         }
 
         private static EmergencyAccessRouteGenerationOptionsV2 ComplexOptions()
