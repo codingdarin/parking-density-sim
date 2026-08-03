@@ -222,8 +222,14 @@ namespace ParkingSim.Runtime
             GUI.Box(bar, string.Empty);
             float x = bar.x + 12f;
             float y = bar.y + 6f;
+            // 2배속은 별도 옵션이 아니라 "2배 재생 버튼" — 각 버튼이
+            // 방향·속도를 함께 확정한다 (역재생·재생은 1배)
+            bool doubleSpeed = _playbackSpeed > 1.5f;
             bool reversePlaying = !_paused && _playbackDirection < 0f;
-            bool forwardPlaying = !_paused && _playbackDirection > 0f;
+            bool forwardPlaying =
+                !_paused && _playbackDirection > 0f && !doubleSpeed;
+            bool fastPlaying =
+                !_paused && _playbackDirection > 0f && doubleSpeed;
             if (DrawActionButton(
                     new Rect(x, y, 88f, 26f),
                     "◀ 역재생",
@@ -231,6 +237,7 @@ namespace ParkingSim.Runtime
                     !reversePlaying))
             {
                 _playbackDirection = -1f;
+                _playbackSpeed = 1f;
                 _paused = false;
             }
             if (DrawActionButton(
@@ -246,15 +253,19 @@ namespace ParkingSim.Runtime
                     !forwardPlaying))
             {
                 _playbackDirection = 1f;
+                _playbackSpeed = 1f;
                 _paused = false;
             }
-            bool doubleSpeed = _playbackSpeed > 1.5f;
             if (DrawActionButton(
                     new Rect(x + 282f, y, 88f, 26f),
                     "▶▶ 2배속",
-                    doubleSpeed,
-                    true))
-                _playbackSpeed = doubleSpeed ? 1f : 2f;
+                    fastPlaying,
+                    !fastPlaying))
+            {
+                _playbackDirection = 1f;
+                _playbackSpeed = 2f;
+                _paused = false;
+            }
             double planSeconds = _timeProfile.PlanSeconds(_plan.Ticks);
             double perTickSeconds = _plan.Ticks > 0
                 ? planSeconds / _plan.Ticks
