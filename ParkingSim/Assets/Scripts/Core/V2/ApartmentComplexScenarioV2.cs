@@ -143,9 +143,15 @@ namespace ParkingSim.Core.V2
             return BuildDensity(MaximumBlockingVehicles, timing);
         }
 
+        /// <summary>
+        /// placementSeed &lt; 0: 팩토리 고정 누적 순서(합성 기준선).
+        /// placementSeed ≥ 0: 시드 주입 순열로 가변 22면 중 N면을 점유 —
+        /// 배치 강건성 축(측정정의서 시드 배치 집계).
+        /// </summary>
         public static ApartmentComplexScenarioV2 BuildDensity(
             int blockingVehicleCount,
-            OperationTimingV2 timing = null)
+            OperationTimingV2 timing = null,
+            int placementSeed = -1)
         {
             if (blockingVehicleCount < 0 ||
                 blockingVehicleCount > MaximumBlockingVehicles)
@@ -198,12 +204,33 @@ namespace ParkingSim.Core.V2
             foreach (int x in Enumerable.Range(0, 12).Select(index => 6 + index * 3))
                 AddSlot(slots, SlotKind.Staging, x, 0);
 
+            IEnumerable<int> occupiedSlots;
+            if (placementSeed < 0)
+            {
+                occupiedSlots = Enumerable.Range(0, blockingVehicleCount);
+            }
+            else
+            {
+                int[] order = Enumerable
+                    .Range(0, MaximumBlockingVehicles).ToArray();
+                var random = new Random(placementSeed);
+                for (int index = order.Length - 1; index > 0; index--)
+                {
+                    int swap = random.Next(index + 1);
+                    (order[index], order[swap]) = (order[swap], order[index]);
+                }
+                occupiedSlots = order
+                    .Take(blockingVehicleCount)
+                    .OrderBy(slotIndex => slotIndex)
+                    .ToArray();
+            }
+
             var problem = new EmergencyProblemV2(
                 Width,
                 Height,
                 floor,
                 slots,
-                Enumerable.Range(0, blockingVehicleCount),
+                occupiedSlots,
                 new[] { (0, 1), (1, 1), (2, 1), (3, 1) },
                 Array.Empty<(int X, int Y)>(),
                 Array.Empty<VehiclePose>(),
