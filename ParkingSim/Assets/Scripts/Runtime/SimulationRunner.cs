@@ -127,6 +127,9 @@ namespace ParkingSim.Runtime
         private readonly Dictionary<(int X, int Y), int> _movableVehicleByCell =
             new Dictionary<(int X, int Y), int>();
 
+        /// <summary>로봇별 레인 유지 스워브 오프셋(지수 수렴 상태)</summary>
+        private Vector3[] _swerveOffsets;
+
         /// <summary>추적 카메라 가림 처리 대상(건물) — 유리 실루엣 전환용</summary>
         private sealed class OccluderEntry
         {

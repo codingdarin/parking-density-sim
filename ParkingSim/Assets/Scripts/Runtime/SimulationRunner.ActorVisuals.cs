@@ -251,6 +251,7 @@ namespace ParkingSim.Runtime
             _transportCameraYaws = new float[viewCount];
             _transportCameraPitches = new float[viewCount];
             _transportCameraDistances = new float[viewCount];
+            _swerveOffsets = new Vector3[viewCount];
             for (int robot = 0; robot < viewCount; robot++)
             {
                 GameObject cube = SimulationVisualAssetFactory.TryCreate(
