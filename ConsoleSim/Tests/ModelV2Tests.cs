@@ -8,7 +8,7 @@ namespace ParkingSim.Tests
 {
     public static class ModelV2Tests
     {
-        public const int ExpectedGateCount = 78;
+        public const int ExpectedGateCount = 79;
 
         public static int RunAll()
         {
@@ -88,6 +88,7 @@ namespace ParkingSim.Tests
             passed += Run("76 핸드오버 정차 간섭 — 정차 유닛 셀 통행 불가", TestHandoverParkedInterference);
             passed += Run("77 단지A 간선 재지정 — 종축 전용구역·저이동 개통", TestSiteAArterialZone);
             passed += Run("78 병렬성 진단 — 로봇-틱 4분해 보존·재현", TestPlanUtilization);
+            passed += Run("79 시드 배치 — 재현·상이·기하 보존", TestComplexPlacementSeeds);
             passed += Run("73 단지A 기하 — 만차 배경·전용구역·밀도 보존", TestSiteAGeometry);
             passed += Run("74 단지A 평가 — 배경 주차열 이동 필수·재현", TestSiteAEvaluation);
             passed += Run("75 단지A 적치 반사실 — 재배치·확장 기하와 재현", TestSiteAStagingCounterfactual);
@@ -2149,6 +2150,35 @@ namespace ParkingSim.Tests
             Assert(first.EffectiveParallelism > 0.0 &&
                    first.EffectiveParallelism <= first.RobotCount + 1e-9,
                 "유효 병렬성이 (0, 조수] 범위를 벗어남");
+        }
+
+        private static void TestComplexPlacementSeeds()
+        {
+            ApartmentComplexScenarioV2 baseline =
+                ApartmentComplexScenarioFactoryV2.BuildDensity(10);
+            ApartmentComplexScenarioV2 seeded =
+                ApartmentComplexScenarioFactoryV2.BuildDensity(10, null, 7);
+            ApartmentComplexScenarioV2 repeat =
+                ApartmentComplexScenarioFactoryV2.BuildDensity(10, null, 7);
+            ApartmentComplexScenarioV2 other =
+                ApartmentComplexScenarioFactoryV2.BuildDensity(10, null, 8);
+            Assert(seeded.BaseProblem.InitialVehicleSlots
+                       .SequenceEqual(repeat.BaseProblem.InitialVehicleSlots),
+                "같은 시드의 배치가 재현되지 않음");
+            Assert(!seeded.BaseProblem.InitialVehicleSlots
+                       .SequenceEqual(other.BaseProblem.InitialVehicleSlots),
+                "다른 시드의 배치가 동일함");
+            Assert(seeded.BaseProblem.VehicleCount == 10 &&
+                   seeded.BaseProblem.InitialVehicleSlots.All(slot =>
+                       slot >= 0 &&
+                       slot < ApartmentComplexScenarioFactoryV2
+                           .MaximumBlockingVehicles),
+                "시드 배치의 점유 슬롯 구성이 어긋남");
+            Assert(seeded.BaseProblem.Slots.Count ==
+                   baseline.BaseProblem.Slots.Count &&
+                   seeded.BaseProblem.StagingCapacity ==
+                   baseline.BaseProblem.StagingCapacity,
+                "시드 배치가 슬롯 기하를 바꿈");
         }
 
         private static EmergencyAccessRouteGenerationOptionsV2 ComplexOptions()
