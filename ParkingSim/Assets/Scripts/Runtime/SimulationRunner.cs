@@ -121,6 +121,8 @@ namespace ParkingSim.Runtime
         private bool _paused;
         /// <summary>재생 방향 — +1 정방향, -1 역재생</summary>
         private float _playbackDirection = 1f;
+        /// <summary>재생 배속 — 1 또는 2</summary>
+        private float _playbackSpeed = 1f;
         private float _displayTick;
         private float _time;
         private Task<PreparedScenario> _planningTask;
@@ -430,7 +432,7 @@ namespace ParkingSim.Runtime
             float cycleSeconds = (_plan.Ticks + EndHoldTicks) * SecondsPerTick;
             if (!_paused)
                 _time = Mathf.Repeat(
-                    _time + Time.deltaTime * _playbackDirection,
+                    _time + Time.deltaTime * _playbackDirection * _playbackSpeed,
                     cycleSeconds);
             float tick = _time / SecondsPerTick;
             ApplyTick(Mathf.Min(tick, _plan.Ticks));
