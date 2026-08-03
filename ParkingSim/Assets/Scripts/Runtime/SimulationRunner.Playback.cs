@@ -407,24 +407,31 @@ namespace ParkingSim.Runtime
                         : (b.Y >= a.Y ? 1 : -1);
                     int cellX = Mathf.RoundToInt(position.x);
                     int cellZ = Mathf.RoundToInt(position.z);
-                    for (int step = 0; step <= 3; step++)
+                    // 현재 행 ±1 띠로 전방을 훑는다 — 계획 경로가 차 사이 틈에서
+                    // 옆 행으로 위빙해도 열이 이어지는 한 레인을 놓지 않는다
+                    // (들어갔다 나왔다 방지: 진입 1회 → 열 끝까지 직선 → 복귀 1회).
+                    int[] rowOffsets = { 0, -1, 1 };
+                    for (int step = 0; step <= 3 && !found; step++)
                     {
-                        (int X, int Y) cell = travelAlongX
-                            ? (cellX + step * direction, cellZ)
-                            : (cellX, cellZ + step * direction);
-                        VehiclePose pose;
-                        if (!TryGetParkedPose(cell, tick, robot, out pose))
-                            continue;
-                        bool carHorizontal =
-                            pose.Orientation == VehicleOrientation.Horizontal;
-                        if (carHorizontal == travelAlongX) continue;
-                        var second = pose.SecondCell;
-                        found = true;
-                        laneIsX = carHorizontal;
-                        laneCoord = carHorizontal
-                            ? (pose.X + second.X) * 0.5f
-                            : (pose.Y + second.Y) * 0.5f;
-                        break;
+                        foreach (int rowOffset in rowOffsets)
+                        {
+                            (int X, int Y) cell = travelAlongX
+                                ? (cellX + step * direction, cellZ + rowOffset)
+                                : (cellX + rowOffset, cellZ + step * direction);
+                            VehiclePose pose;
+                            if (!TryGetParkedPose(cell, tick, robot, out pose))
+                                continue;
+                            bool carHorizontal =
+                                pose.Orientation == VehicleOrientation.Horizontal;
+                            if (carHorizontal == travelAlongX) continue;
+                            var second = pose.SecondCell;
+                            found = true;
+                            laneIsX = carHorizontal;
+                            laneCoord = carHorizontal
+                                ? (pose.X + second.X) * 0.5f
+                                : (pose.Y + second.Y) * 0.5f;
+                            break;
+                        }
                     }
                 }
             }
