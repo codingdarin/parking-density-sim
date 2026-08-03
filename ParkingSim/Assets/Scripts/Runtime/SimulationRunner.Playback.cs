@@ -58,7 +58,8 @@ namespace ParkingSim.Runtime
                             fraction),
                         a,
                         b,
-                        timelineTick);
+                        timelineTick,
+                        robot);
                     _robotViews[robot].transform.position = Vector3.Lerp(
                         naturalPosition,
                         RobotPosition(servicePose, _robotUsesCustomView[robot]),
@@ -77,7 +78,8 @@ namespace ParkingSim.Runtime
                             fraction),
                         a,
                         b,
-                        timelineTick);
+                        timelineTick,
+                        robot);
                     _robotViews[robot].transform.rotation =
                         SmoothRobotRotation(
                             _robotViews[robot].transform.rotation,
@@ -375,71 +377,75 @@ namespace ParkingSim.Runtime
         }
 
         /// <summary>
-        /// 하부 통과 스워브 — 가로로 선 주차 차량을 가로지를 때 타이어(축선)를
-        /// 뚫지 않도록 렌더 위치만 차량 중심(앞뒤 축 사이)으로 비켜 준다.
-        /// 적재 중이거나 차 축과 평행하게 지나는 경우는 보정하지 않는다.
-        /// 모델 좌표는 불변 — 순수 시각 보정.
+        /// 하부 통과 레인 유지 스워브 — 같은 방향 주차열에 들어설 때 한 번
+        /// 축간 레인으로 옳기고, 열이 이어지는 동안 그 레인을 유지한다.
+        /// 방향이 다른 구간을 만나면 그때 한 번 더 옳긴다(로봇별 오프셋
+        /// 상태를 목표 레인으로 지수 수렴). 모델 좌표 불변 — 순수 시각 보정.
         /// </summary>
         private Vector3 ApplyUnderCarSwerve(
             Vector3 position,
             TimedRobotStateV2 a,
             TimedRobotStateV2 b,
-            float tick)
+            float tick,
+            int robot)
         {
-            if (a.Carrying || b.Carrying) return position;
-            int travelX = Mathf.Abs(b.X - a.X);
-            int travelZ = Mathf.Abs(b.Y - a.Y);
-            if (travelX == 0 && travelZ == 0) return position;
-            bool travelAlongX = travelX >= travelZ;
-            int cellX = Mathf.RoundToInt(position.x);
-            int cellZ = Mathf.RoundToInt(position.z);
-            // 진행 축의 현재·양옆 셀에서 진행과 수직인 주차 차량을 찾고,
-            // 차 행/열까지의 실제 거리로 가중해 경계에서 0으로 이어지게 한다
-            // (셀 진입 순간 점프 방지 — 접근 구간부터 매끄럽게 시작).
-            float bestWeight = 0f;
-            float target = 0f;
-            bool targetIsX = false;
-            for (int step = -1; step <= 1; step++)
+            Vector3 target = Vector3.zero;
+            if (!a.Carrying && !b.Carrying)
             {
-                (int X, int Y) cell = travelAlongX
-                    ? (cellX + step, cellZ)
-                    : (cellX, cellZ + step);
-                VehiclePose pose;
-                if (!TryGetParkedPose(cell, tick, out pose)) continue;
-                bool carHorizontal =
-                    pose.Orientation == VehicleOrientation.Horizontal;
-                // 차 축과 평행 이동은 좌우 바퀴 사이 통로라 보정 불요
-                if (carHorizontal == travelAlongX) continue;
-                var second = pose.SecondCell;
-                if (carHorizontal)
+                int travelX = Mathf.Abs(b.X - a.X);
+                int travelZ = Mathf.Abs(b.Y - a.Y);
+                if (travelX != 0 || travelZ != 0)
                 {
-                    float weight = Mathf.SmoothStep(0f, 1f, Mathf.Clamp01(
-                        1.5f - 2f * Mathf.Abs(position.z - pose.Y)));
-                    if (weight > bestWeight)
+                    bool travelAlongX = travelX >= travelZ;
+                    int cellX = Mathf.RoundToInt(position.x);
+                    int cellZ = Mathf.RoundToInt(position.z);
+                    float bestDistance = float.MaxValue;
+                    for (int step = -2; step <= 2; step++)
                     {
-                        bestWeight = weight;
-                        target = (pose.X + second.X) * 0.5f;
-                        targetIsX = true;
-                    }
-                }
-                else
-                {
-                    float weight = Mathf.SmoothStep(0f, 1f, Mathf.Clamp01(
-                        1.5f - 2f * Mathf.Abs(position.x - pose.X)));
-                    if (weight > bestWeight)
-                    {
-                        bestWeight = weight;
-                        target = (pose.Y + second.Y) * 0.5f;
-                        targetIsX = false;
+                        (int X, int Y) cell = travelAlongX
+                            ? (cellX + step, cellZ)
+                            : (cellX, cellZ + step);
+                        VehiclePose pose;
+                        if (!TryGetParkedPose(cell, tick, out pose)) continue;
+                        bool carHorizontal =
+                            pose.Orientation == VehicleOrientation.Horizontal;
+                        // 차 축과 평행 이동은 좌우 바퀴 사이 통로라 보정 불요
+                        if (carHorizontal == travelAlongX) continue;
+                        var second = pose.SecondCell;
+                        if (carHorizontal)
+                        {
+                            float distance = Mathf.Abs(position.z - pose.Y);
+                            if (distance <= 1.25f && distance < bestDistance)
+                            {
+                                bestDistance = distance;
+                                target = new Vector3(
+                                    (pose.X + second.X) * 0.5f - position.x,
+                                    0f,
+                                    0f);
+                            }
+                        }
+                        else
+                        {
+                            float distance = Mathf.Abs(position.x - pose.X);
+                            if (distance <= 1.25f && distance < bestDistance)
+                            {
+                                bestDistance = distance;
+                                target = new Vector3(
+                                    0f,
+                                    0f,
+                                    (pose.Y + second.Y) * 0.5f - position.z);
+                            }
+                        }
                     }
                 }
             }
-            if (bestWeight <= 0f) return position;
-            if (targetIsX)
-                position.x = Mathf.Lerp(position.x, target, bestWeight);
-            else
-                position.z = Mathf.Lerp(position.z, target, bestWeight);
-            return position;
+            if (_swerveOffsets == null || robot >= _swerveOffsets.Length)
+                return position + target;
+            _swerveOffsets[robot] = Vector3.Lerp(
+                _swerveOffsets[robot],
+                target,
+                1f - Mathf.Exp(-7f * Time.deltaTime));
+            return position + _swerveOffsets[robot];
         }
 
         /// <summary>해당 셀에 지금 서 있는 주차 차량 pose — 고정 차량 + 아직
