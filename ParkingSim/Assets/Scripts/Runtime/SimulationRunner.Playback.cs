@@ -57,7 +57,8 @@ namespace ParkingSim.Runtime
                             RobotPosition(b, _robotUsesCustomView[robot]),
                             fraction),
                         a,
-                        b);
+                        b,
+                        timelineTick);
                     _robotViews[robot].transform.position = Vector3.Lerp(
                         naturalPosition,
                         RobotPosition(servicePose, _robotUsesCustomView[robot]),
@@ -75,7 +76,8 @@ namespace ParkingSim.Runtime
                             RobotPosition(b, _robotUsesCustomView[robot]),
                             fraction),
                         a,
-                        b);
+                        b,
+                        timelineTick);
                     _robotViews[robot].transform.rotation =
                         SmoothRobotRotation(
                             _robotViews[robot].transform.rotation,
@@ -154,9 +156,9 @@ namespace ParkingSim.Runtime
                 marker.transform.localScale =
                     new Vector3(pulse, 1f, pulse);
 
-                bool carrying = StateAt(
-                    _plan.RobotTimelines[robot],
-                    stateTick).Carrying;
+                bool carrying = robot < _plan.RobotTimelines.Length &&
+                    _plan.RobotTimelines[robot].Count > 0 &&
+                    StateAt(_plan.RobotTimelines[robot], stateTick).Carrying;
                 Color color = RobotColor(robot, carrying);
                 SetTrackingFrameColor(marker, color);
                 if (_robotControlLabels != null &&
@@ -296,9 +298,9 @@ namespace ParkingSim.Runtime
                 Mathf.FloorToInt(tick),
                 0,
                 _plan.Ticks);
-            bool carrying = StateAt(
-                _plan.RobotTimelines[robot],
-                stateTick).Carrying;
+            bool carrying = robot < _plan.RobotTimelines.Length &&
+                _plan.RobotTimelines[robot].Count > 0 &&
+                StateAt(_plan.RobotTimelines[robot], stateTick).Carrying;
             // 취득: 부채 접힘은 0~85%로 길게(천천히), 상승은 기존 42~100% 유지 —
             // 접히면서 함께 들리는 동작. 해제는 역순 미러.
             float armAmount;
@@ -381,35 +383,85 @@ namespace ParkingSim.Runtime
         private Vector3 ApplyUnderCarSwerve(
             Vector3 position,
             TimedRobotStateV2 a,
-            TimedRobotStateV2 b)
+            TimedRobotStateV2 b,
+            float tick)
         {
             if (a.Carrying || b.Carrying) return position;
-            var cell = (Mathf.RoundToInt(position.x), Mathf.RoundToInt(position.z));
-            if (!_fixedPoseByCell.TryGetValue(cell, out VehiclePose pose))
-                return position;
-            bool carHorizontal =
-                pose.Orientation == VehicleOrientation.Horizontal;
             int travelX = Mathf.Abs(b.X - a.X);
             int travelZ = Mathf.Abs(b.Y - a.Y);
-            // 차 축과 평행 이동은 좌우 바퀴 사이 통로라 보정 불요
-            if (carHorizontal && travelX > travelZ) return position;
-            if (!carHorizontal && travelZ > travelX) return position;
-            var second = pose.SecondCell;
-            if (carHorizontal)
+            if (travelX == 0 && travelZ == 0) return position;
+            bool travelAlongX = travelX >= travelZ;
+            int cellX = Mathf.RoundToInt(position.x);
+            int cellZ = Mathf.RoundToInt(position.z);
+            // 진행 축의 현재·양옆 셀에서 진행과 수직인 주차 차량을 찾고,
+            // 차 행/열까지의 실제 거리로 가중해 경계에서 0으로 이어지게 한다
+            // (셀 진입 순간 점프 방지 — 접근 구간부터 매끄럽게 시작).
+            float bestWeight = 0f;
+            float target = 0f;
+            bool targetIsX = false;
+            for (int step = -1; step <= 1; step++)
             {
-                float centerX = (pose.X + second.X) * 0.5f;
-                float weight = Mathf.Clamp01(
-                    1.5f - 2f * Mathf.Abs(position.z - pose.Y));
-                position.x = Mathf.Lerp(position.x, centerX, weight);
+                (int X, int Y) cell = travelAlongX
+                    ? (cellX + step, cellZ)
+                    : (cellX, cellZ + step);
+                VehiclePose pose;
+                if (!TryGetParkedPose(cell, tick, out pose)) continue;
+                bool carHorizontal =
+                    pose.Orientation == VehicleOrientation.Horizontal;
+                // 차 축과 평행 이동은 좌우 바퀴 사이 통로라 보정 불요
+                if (carHorizontal == travelAlongX) continue;
+                var second = pose.SecondCell;
+                if (carHorizontal)
+                {
+                    float weight = Mathf.SmoothStep(0f, 1f, Mathf.Clamp01(
+                        1.5f - 2f * Mathf.Abs(position.z - pose.Y)));
+                    if (weight > bestWeight)
+                    {
+                        bestWeight = weight;
+                        target = (pose.X + second.X) * 0.5f;
+                        targetIsX = true;
+                    }
+                }
+                else
+                {
+                    float weight = Mathf.SmoothStep(0f, 1f, Mathf.Clamp01(
+                        1.5f - 2f * Mathf.Abs(position.x - pose.X)));
+                    if (weight > bestWeight)
+                    {
+                        bestWeight = weight;
+                        target = (pose.Y + second.Y) * 0.5f;
+                        targetIsX = false;
+                    }
+                }
             }
+            if (bestWeight <= 0f) return position;
+            if (targetIsX)
+                position.x = Mathf.Lerp(position.x, target, bestWeight);
             else
-            {
-                float centerZ = (pose.Y + second.Y) * 0.5f;
-                float weight = Mathf.Clamp01(
-                    1.5f - 2f * Mathf.Abs(position.x - pose.X));
-                position.z = Mathf.Lerp(position.z, centerZ, weight);
-            }
+                position.z = Mathf.Lerp(position.z, target, bestWeight);
             return position;
+        }
+
+        /// <summary>해당 셀에 지금 서 있는 주차 차량 pose — 고정 차량 + 아직
+        /// 들리지 않은 이동 대상 차량(자기 LiftTick 전까지)을 함께 본다.</summary>
+        private bool TryGetParkedPose(
+            (int X, int Y) cell, float tick, out VehiclePose pose)
+        {
+            if (_fixedPoseByCell.TryGetValue(cell, out pose)) return true;
+            int vehicle;
+            if (_movableVehicleByCell.TryGetValue(cell, out vehicle))
+            {
+                PipelinedMissionV2 mission;
+                if (!_missions.TryGetValue(vehicle, out mission) ||
+                    tick < mission.LiftTick)
+                {
+                    pose = _problem.Slots[
+                        _problem.InitialVehicleSlots[vehicle]].Pose;
+                    return true;
+                }
+            }
+            pose = default(VehiclePose);
+            return false;
         }
 
         private int ServicePhase(int robot, float tick, out float progress)
