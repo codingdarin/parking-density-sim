@@ -11,6 +11,76 @@ namespace ParkingSim.Runtime
 {
     partial class SimulationRunner
     {
+        /// <summary>
+        /// 추적 카메라와 유닛 사이를 가리는 건물을 유리 실루엣으로 전환한다.
+        /// 경계 상자-시선 레이 검사(콜라이더 불요) — 벗어나면 원 재질 복원.
+        /// </summary>
+        private void UpdateTrackingOcclusion()
+        {
+            bool tracking = _selectedTransportCamera >= 0 &&
+                _transportCameras != null &&
+                _robotViews != null &&
+                _selectedTransportCamera < _transportCameras.Length &&
+                _selectedTransportCamera < _robotViews.Length &&
+                _transportCameras[_selectedTransportCamera] != null &&
+                _robotViews[_selectedTransportCamera] != null;
+            Vector3 cameraPosition = Vector3.zero;
+            Vector3 unitPosition = Vector3.zero;
+            float distance = 0f;
+            if (tracking)
+            {
+                cameraPosition = _transportCameras[_selectedTransportCamera]
+                    .transform.position;
+                unitPosition = _robotViews[_selectedTransportCamera]
+                    .transform.position + Vector3.up * 0.2f;
+                distance = Vector3.Distance(cameraPosition, unitPosition);
+            }
+            foreach (OccluderEntry entry in _occluders)
+            {
+                bool occludes = false;
+                if (tracking && distance > 0.01f)
+                {
+                    var ray = new Ray(
+                        cameraPosition,
+                        (unitPosition - cameraPosition) / distance);
+                    occludes = entry.Bounds.IntersectRay(ray, out float hit) &&
+                               hit < distance;
+                }
+                if (occludes == entry.Ghosted) continue;
+                entry.Ghosted = occludes;
+                for (int index = 0; index < entry.Renderers.Length; index++)
+                {
+                    Renderer renderer = entry.Renderers[index];
+                    if (renderer == null) continue;
+                    if (occludes)
+                    {
+                        Material ghost = GhostMaterial();
+                        var materials =
+                            new Material[renderer.sharedMaterials.Length];
+                        for (int slot = 0; slot < materials.Length; slot++)
+                            materials[slot] = ghost;
+                        renderer.sharedMaterials = materials;
+                    }
+                    else
+                    {
+                        renderer.sharedMaterials = entry.Originals[index];
+                    }
+                }
+            }
+        }
+
+        private Material GhostMaterial()
+        {
+            if (_ghostMaterial != null) return _ghostMaterial;
+            _ghostMaterial = CreatePlumbobGlassMaterial();
+            _ghostMaterial.name = "OccluderGhost";
+            Color tint = new Color(0.55f, 0.62f, 0.70f, 0.22f);
+            _ghostMaterial.color = tint;
+            if (_ghostMaterial.HasProperty("_BaseColor"))
+                _ghostMaterial.SetColor("_BaseColor", tint);
+            return _ghostMaterial;
+        }
+
         private void SetupLighting()
         {
             Light[] lights = Object.FindObjectsByType<Light>();

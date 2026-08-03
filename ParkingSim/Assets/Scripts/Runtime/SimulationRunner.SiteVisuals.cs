@@ -675,12 +675,33 @@ namespace ParkingSim.Runtime
                 origin,
                 new Vector3(width, height, depth));
             DisableColliders(building);
+            RegisterOccluder(building, origin, new Vector3(width, height, depth));
             BuildApartmentClickTarget(
                 name,
                 origin,
                 new Vector3(width, height, depth));
             // 동 번호는 현관 로비 사인(BuildLobbySign) 하나만 사용 — 상단 대형
             // 라벨은 중복 표기라 제거 (사용자 피드백).
+        }
+
+        /// <summary>추적 카메라 가림 처리 대상으로 건물 렌더러·경계를 등록한다.</summary>
+        private void RegisterOccluder(
+            GameObject root,
+            Vector3 bottomCenter,
+            Vector3 size)
+        {
+            Renderer[] renderers = root.GetComponentsInChildren<Renderer>();
+            if (renderers.Length == 0) return;
+            _occluders.Add(new OccluderEntry
+            {
+                Bounds = new Bounds(
+                    bottomCenter + Vector3.up * (size.y * 0.5f),
+                    size + new Vector3(0.4f, 0.4f, 0.4f)),
+                Renderers = renderers,
+                Originals = renderers
+                    .Select(renderer => renderer.sharedMaterials)
+                    .ToArray(),
+            });
         }
 
         private void BuildApartmentClickTarget(
