@@ -85,7 +85,8 @@ namespace ParkingSim.Runtime
                 BeginPresetLoad(
                     _includeSecondaryEntrances ? 1 : 0,
                     _fireBuildingId,
-                    _blockingVehicleCount);
+                    _blockingVehicleCount,
+                    _scenarioKind);
                 return;
             }
 
@@ -115,7 +116,8 @@ namespace ParkingSim.Runtime
             BeginPresetLoad(
                 _includeSecondaryEntrances ? 1 : 0,
                 _fireBuildingId,
-                _blockingVehicleCount);
+                _blockingVehicleCount,
+                _scenarioKind);
         }
 
         private void ClearBlockages()
@@ -126,7 +128,8 @@ namespace ParkingSim.Runtime
             BeginPresetLoad(
                 _includeSecondaryEntrances ? 1 : 0,
                 _fireBuildingId,
-                _blockingVehicleCount);
+                _blockingVehicleCount,
+                _scenarioKind);
         }
 
         /// <summary>쓰러진 나무 마커 — 관제/3D 공용(Shared).</summary>

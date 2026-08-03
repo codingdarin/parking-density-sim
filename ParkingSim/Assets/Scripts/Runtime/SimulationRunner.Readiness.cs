@@ -19,6 +19,7 @@ namespace ParkingSim.Runtime
         /// </summary>
         private sealed class ReadinessBoard
         {
+            public SiteScenarioKind Kind;
             public int BlockingVehicleCount;
             public bool IncludeSecondaryEntrances;
             public int AvailableUnitCount;
@@ -74,6 +75,7 @@ namespace ParkingSim.Runtime
         private bool ReadinessBoardCurrent()
         {
             return _readinessBoard != null &&
+                   _readinessBoard.Kind == _scenarioKind &&
                    _readinessBoard.BlockingVehicleCount == _blockingVehicleCount &&
                    _readinessBoard.IncludeSecondaryEntrances ==
                        _includeSecondaryEntrances &&
@@ -86,14 +88,14 @@ namespace ParkingSim.Runtime
             int blockingVehicleCount = _blockingVehicleCount;
             bool includeSecondaryEntrances = _includeSecondaryEntrances;
             int availableUnitCount = _availableUnitCount;
+            SiteScenarioKind kind = _scenarioKind;
             IReadOnlyList<(int X, int Y)> blockedCells = BlockedCellsSnapshot();
             string blockedSignature = BlockedCellsSignature();
             PhysicalTimeProfileV2 profile = _timeProfile;
             _readinessTask = Task.Run(() =>
             {
-                ApartmentComplexScenarioV2 complex =
-                    ApartmentComplexScenarioFactoryV2.BuildDensity(
-                        blockingVehicleCount, profile.CreateOperationTiming());
+                ApartmentComplexScenarioV2 complex = BuildScenario(
+                    kind, blockingVehicleCount, profile.CreateOperationTiming());
                 if (blockedCells.Count > 0)
                 {
                     DisturbedComplexBuildResultV2 disturbed =
@@ -103,6 +105,7 @@ namespace ParkingSim.Runtime
                     if (!disturbed.Success)
                         return new ReadinessBoard
                         {
+                            Kind = kind,
                             BlockingVehicleCount = blockingVehicleCount,
                             IncludeSecondaryEntrances = includeSecondaryEntrances,
                             AvailableUnitCount = availableUnitCount,
@@ -132,6 +135,7 @@ namespace ParkingSim.Runtime
                         profile));
                 return new ReadinessBoard
                 {
+                    Kind = kind,
                     BlockingVehicleCount = blockingVehicleCount,
                     IncludeSecondaryEntrances = includeSecondaryEntrances,
                     AvailableUnitCount = availableUnitCount,
@@ -147,7 +151,8 @@ namespace ParkingSim.Runtime
             GUI.Box(panel, string.Empty);
             float x = panel.x + 12f;
             float y = panel.y + 10f;
-            GUI.Label(new Rect(x, y, 260f, 22f), "관제보드 — 상시 대응력");
+            GUI.Label(new Rect(x, y, 260f, 22f),
+                "관제보드 — " + ScenarioDisplayName(_scenarioKind));
             y += 22f;
             GUI.Label(new Rect(x, y, 260f, 20f),
                 "가용 " + _availableUnitCount + "/4조 · 도로 주차 " +
@@ -160,7 +165,7 @@ namespace ParkingSim.Runtime
             bool stale = !ReadinessBoardCurrent();
             if (_readinessBoard == null)
             {
-                GUI.Label(new Rect(x, y, 260f, 20f), "8개 동 대응력 계산 중…");
+                GUI.Label(new Rect(x, y, 260f, 20f), "동별 대응력 계산 중…");
                 return;
             }
             if (stale)
@@ -208,7 +213,7 @@ namespace ParkingSim.Runtime
             GUI.color = previousColor;
             y += 4f;
             GUI.Label(new Rect(x, y, 260f, 20f),
-                "8동 중 " + safeCount + "동 7분 이내" +
+                _readinessBoard.Rows.Count + "동 중 " + safeCount + "동 7분 이내" +
                 (safeCount == _readinessBoard.Rows.Count
                     ? " — 전 동 대응 가능"
                     : " — 취약 동 존재"));

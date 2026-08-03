@@ -313,7 +313,10 @@ namespace ParkingSim.Runtime
 
         private void BuildRoadLaneMarkings()
         {
-            foreach (int y in new[] { 3, 18, 37 })
+            int[] laneRows = _problem.Height >= 41
+                ? new[] { 3, 18, 37 }
+                : new[] { 1, 10, 20 };
+            foreach (int y in laneRows)
             {
                 for (int x = 1; x < _problem.Width - 1; x += 4)
                 {
@@ -392,6 +395,8 @@ namespace ParkingSim.Runtime
 
         private void BuildLandscapeProps()
         {
+            // 조경 소품 좌표는 8동 합성 격자(59×41) 기준 — 다른 격자에서는 생략
+            if (_problem.Width < 59 || _problem.Height < 41) return;
             Vector3[] treePositions =
             {
                 new Vector3(1f, 0f, 8f),
@@ -540,7 +545,8 @@ namespace ParkingSim.Runtime
                 int maxY = apartment.FootprintCells.Max(cell => cell.Y);
                 float width = maxX - minX + 0.82f;
                 float depth = maxY - minY + 0.82f;
-                float height = 8.5f + ((apartment.Id - 101) % 4) * 0.9f;
+                int ordinal = ((apartment.Id - 101) % 4 + 4) % 4;
+                float height = 8.5f + ordinal * 0.9f;
                 Vector3 origin = new Vector3(
                     (minX + maxX) * 0.5f,
                     0f,
@@ -558,7 +564,7 @@ namespace ParkingSim.Runtime
                     width,
                     depth,
                     height,
-                    variant: apartment.Id - 101);
+                    variant: ordinal);
             }
         }
 
@@ -577,7 +583,9 @@ namespace ParkingSim.Runtime
                 new Vector3(width + 0.10f, 0.08f, depth + 0.10f),
                 _siteConcreteMaterial);
 
-            bool northRow = apartment.Id <= 104;
+            // 로비는 두 동 열 사이의 회랑(격자 중앙) 쪽을 향한다
+            bool northRow =
+                (minY + maxY) * 0.5f > (_problem.Height - 1) * 0.5f;
             float direction = northRow ? -1f : 1f;
             float facadeZ = northRow
                 ? minY + 0.10f

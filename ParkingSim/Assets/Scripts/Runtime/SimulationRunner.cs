@@ -39,6 +39,7 @@ namespace ParkingSim.Runtime
             public ApartmentComplexScenarioV2 Complex;
             public ApartmentComplexPlanResultV2 ComplexPlan;
             public string DisturbanceFailure;
+            public SiteScenarioKind Kind;
         }
 
         private sealed class TransportLiftVisual
@@ -127,7 +128,7 @@ namespace ParkingSim.Runtime
         private float _planningStartedAt;
         private static readonly Rect GuideBounds = new Rect(12f, 12f, 620f, 260f);
         private const float ControlPanelWidth = 286f;
-        private const float ControlPanelHeight = 434f;
+        private const float ControlPanelHeight = 500f;
 
         private void Start()
         {
@@ -136,11 +137,12 @@ namespace ParkingSim.Runtime
             _blockingVehicleCount =
                 ApartmentComplexScenarioFactoryV2.MaximumBlockingVehicles;
             _requestedBlockingVehicleCount = _blockingVehicleCount;
-            BeginPresetLoad(1, _fireBuildingId, _blockingVehicleCount);
+            BeginPresetLoad(1, _fireBuildingId, _blockingVehicleCount, _scenarioKind);
             // 첫 계획이 계산되는 동안 스카이박스 대신 단지 현황을 먼저 보여준다.
             // 환경 지오메트리는 계산이 필요 없어 즉시 생성 가능하다.
             BuildScenarioPreview(
-                ApartmentComplexScenarioFactoryV2.BuildDensity(
+                BuildScenario(
+                    _scenarioKind,
                     _blockingVehicleCount,
                     _timeProfile.CreateOperationTiming()));
         }
@@ -178,7 +180,8 @@ namespace ParkingSim.Runtime
         private void BeginPresetLoad(
             int preset,
             int buildingId,
-            int blockingVehicleCount)
+            int blockingVehicleCount,
+            SiteScenarioKind kind)
         {
             if (_planningTask != null)
             {
@@ -194,6 +197,7 @@ namespace ParkingSim.Runtime
             _pendingIncludeSecondaryEntrances = includeSecondaryEntrances;
             _planningStartedAt = Time.realtimeSinceStartup;
             _inputStatus =
+                ScenarioDisplayName(kind) + " · " +
                 buildingId + "동 화재 · " +
                 (includeSecondaryEntrances ? "서문·동문 비교" : "서문만 사용") +
                 " · 도로 주차 " + blockingVehicleCount +
@@ -201,9 +205,7 @@ namespace ParkingSim.Runtime
             _planningTask = Task.Run(() =>
             {
                 ApartmentComplexScenarioV2 complex =
-                    ApartmentComplexScenarioFactoryV2.BuildDensity(
-                        blockingVehicleCount,
-                        timing);
+                    BuildScenario(kind, blockingVehicleCount, timing);
                 if (blockedCells.Count > 0)
                 {
                     DisturbedComplexBuildResultV2 disturbed =
@@ -217,6 +219,7 @@ namespace ParkingSim.Runtime
                             BlockingVehicleCount = blockingVehicleCount,
                             IncludeSecondaryEntrances = includeSecondaryEntrances,
                             DisturbanceFailure = disturbed.FailReason,
+                            Kind = kind,
                         };
                     complex = disturbed.Scenario;
                 }
@@ -241,6 +244,7 @@ namespace ParkingSim.Runtime
                     IncludeSecondaryEntrances = includeSecondaryEntrances,
                     Complex = complex,
                     ComplexPlan = complexPlan,
+                    Kind = kind,
                 };
             });
         }
@@ -279,6 +283,7 @@ namespace ParkingSim.Runtime
                 Debug.LogWarning("[Model V2] " + _inputStatus);
                 return;
             }
+            _scenarioKind = prepared.Kind;
             _fireBuildingId = prepared.BuildingId;
             _blockingVehicleCount = prepared.BlockingVehicleCount;
             _requestedBlockingVehicleCount = _blockingVehicleCount;
@@ -316,7 +321,8 @@ namespace ParkingSim.Runtime
             _problem = built.Problem;
             _plan = plan;
             _scenarioName =
-                "8동 단지 " + _fireBuildingId + "동 화재 · " +
+                ScenarioDisplayName(prepared.Kind) + " " +
+                _fireBuildingId + "동 화재 · " +
                 (_includeSecondaryEntrances ? "서문+동문" : "서문 단일") +
                 " · N=" + _blockingVehicleCount;
             _routeName = _selectedEntrance.Name + "/" + _selectedRoute.Name;
@@ -401,7 +407,8 @@ namespace ParkingSim.Runtime
                         BeginPresetLoad(
                             _includeSecondaryEntrances ? 1 : 0,
                             clickedBuildingId,
-                            _blockingVehicleCount);
+                            _blockingVehicleCount,
+                            _scenarioKind);
                     }
                     else
                     {
