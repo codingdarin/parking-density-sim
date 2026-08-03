@@ -123,6 +123,10 @@ namespace ParkingSim.Runtime
         private readonly Dictionary<(int X, int Y), VehiclePose> _fixedPoseByCell =
             new Dictionary<(int X, int Y), VehiclePose>();
 
+        /// <summary>이동 대상 차량의 초기 pose 셀 색인 — 들리기 전까지 스워브 대상</summary>
+        private readonly Dictionary<(int X, int Y), int> _movableVehicleByCell =
+            new Dictionary<(int X, int Y), int>();
+
         /// <summary>추적 카메라 가림 처리 대상(건물) — 유리 실루엣 전환용</summary>
         private sealed class OccluderEntry
         {
@@ -143,6 +147,15 @@ namespace ParkingSim.Runtime
                 _fixedPoseByCell[(pose.X, pose.Y)] = pose;
                 var second = pose.SecondCell;
                 _fixedPoseByCell[(second.X, second.Y)] = pose;
+            }
+            _movableVehicleByCell.Clear();
+            for (int vehicle = 0; vehicle < _problem.VehicleCount; vehicle++)
+            {
+                VehiclePose pose =
+                    _problem.Slots[_problem.InitialVehicleSlots[vehicle]].Pose;
+                _movableVehicleByCell[(pose.X, pose.Y)] = vehicle;
+                var second = pose.SecondCell;
+                _movableVehicleByCell[(second.X, second.Y)] = vehicle;
             }
         }
 

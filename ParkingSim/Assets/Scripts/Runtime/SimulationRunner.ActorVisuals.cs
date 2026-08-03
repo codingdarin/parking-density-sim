@@ -233,22 +233,25 @@ namespace ParkingSim.Runtime
 
         private void BuildRobots()
         {
-            _robotViews = new GameObject[_plan.RobotTimelines.Length];
-            _robotControlMarkers =
-                new GameObject[_plan.RobotTimelines.Length];
-            _robotControlLabels =
-                new TextMesh[_plan.RobotTimelines.Length];
-            _robotServiceIndicators = new GameObject[_plan.RobotTimelines.Length];
-            _robotLiftVisuals =
-                new TransportLiftVisual[_plan.RobotTimelines.Length];
-            _robotUsesCustomView = new bool[_plan.RobotTimelines.Length];
-            _transportCameras = new Camera[_plan.RobotTimelines.Length];
-            _transportCameraFocusOffsets =
-                new Vector3[_plan.RobotTimelines.Length];
-            _transportCameraYaws = new float[_plan.RobotTimelines.Length];
-            _transportCameraPitches = new float[_plan.RobotTimelines.Length];
-            _transportCameraDistances = new float[_plan.RobotTimelines.Length];
-            for (int robot = 0; robot < _plan.RobotTimelines.Length; robot++)
+            // 계획이 활성화한 유닛(규칙 9)보다 보유 유닛이 많으면, 나머지는
+            // 차고에 정차한 모습으로 함께 표시한다 — 이동 0대 계획에서도
+            // 유닛이 사라져 보이지 않게(단지 전환 시 혼동 방지).
+            int viewCount = Mathf.Clamp(
+                Mathf.Max(_plan.RobotTimelines.Length, _availableUnitCount),
+                1,
+                _problem.RobotStarts.Count);
+            _robotViews = new GameObject[viewCount];
+            _robotControlMarkers = new GameObject[viewCount];
+            _robotControlLabels = new TextMesh[viewCount];
+            _robotServiceIndicators = new GameObject[viewCount];
+            _robotLiftVisuals = new TransportLiftVisual[viewCount];
+            _robotUsesCustomView = new bool[viewCount];
+            _transportCameras = new Camera[viewCount];
+            _transportCameraFocusOffsets = new Vector3[viewCount];
+            _transportCameraYaws = new float[viewCount];
+            _transportCameraPitches = new float[viewCount];
+            _transportCameraDistances = new float[viewCount];
+            for (int robot = 0; robot < viewCount; robot++)
             {
                 GameObject cube = SimulationVisualAssetFactory.TryCreate(
                     SimulationVisualAssetFactory.TransportUnitResourcePath,
@@ -301,6 +304,34 @@ namespace ParkingSim.Runtime
                 _transportCameraYaws[robot] = 90f;
                 _transportCameraPitches[robot] = 25f;
                 _transportCameraDistances[robot] = 2.2f;
+                if (robot >= _plan.RobotTimelines.Length)
+                {
+                    // 정적 도크 유닛 — 차고 위치에 밀착 상태로 정차
+                    var dock = _problem.RobotStarts[robot];
+                    cube.transform.position = new Vector3(
+                        dock.X,
+                        _robotUsesCustomView[robot] ? 0f : 0.20f,
+                        dock.Y);
+                    cube.transform.rotation = Quaternion.identity;
+                    TransportLiftVisual liftVisual = _robotLiftVisuals[robot];
+                    if (liftVisual != null && liftVisual.AxleModules != null)
+                        for (int module = 0;
+                             module < liftVisual.AxleModules.Length;
+                             module++)
+                        {
+                            if (liftVisual.AxleModules[module] == null) continue;
+                            Vector3 local =
+                                liftVisual.AxleModules[module].localPosition;
+                            liftVisual.AxleModules[module].localPosition =
+                                new Vector3(
+                                    (module == 0 ? -1f : 1f) * IdleModuleOffsetX,
+                                    local.y,
+                                    local.z);
+                        }
+                    if (_robotControlMarkers[robot] != null)
+                        _robotControlMarkers[robot].transform.position =
+                            new Vector3(dock.X, 0.30f, dock.Y);
+                }
                 ApplyTransportCameraPose(robot);
             }
         }
