@@ -232,23 +232,20 @@ namespace ParkingSim.Runtime
             float pickupStart = mission.LiftTick - _problem.Timing.LiftServiceTicks;
             if (tick >= pickupStart && tick < mission.LiftTick)
             {
-                // 상승은 앞 55%에 압축 — 부채 접힘(0~85%)이 진행되는 동안
-                // 타이어가 이미 떠 있어 클램핑 암과 바퀴가 겹치지 않는다
                 float progress = Mathf.InverseLerp(pickupStart, mission.LiftTick, tick);
                 return Mathf.SmoothStep(
                     parkedHeight,
                     carriedHeight,
-                    Mathf.Clamp01(progress / 0.55f));
+                    progress);
             }
             float releaseStart = mission.DropTick - _problem.Timing.DropServiceTicks;
             if (tick >= releaseStart && tick < mission.DropTick)
             {
-                // 하강은 뒤 55%에 — 팔이 먼저 펴진 뒤 내려놓는 역순 미러
                 float progress = Mathf.InverseLerp(releaseStart, mission.DropTick, tick);
                 return Mathf.SmoothStep(
                     carriedHeight,
                     parkedHeight,
-                    Mathf.Clamp01((progress - 0.45f) / 0.55f));
+                    progress);
             }
             return tick >= mission.LiftTick && tick < mission.DropTick
                 ? carriedHeight
@@ -316,19 +313,17 @@ namespace ParkingSim.Runtime
                     0f,
                     1f,
                     Mathf.Clamp01(progress / 0.85f));
-                // 덱은 차량 상승(앞 55%)과 동기
                 deckAmount = Mathf.SmoothStep(
                     0f,
                     1f,
-                    Mathf.Clamp01(progress / 0.55f));
+                    Mathf.Clamp01((progress - 0.42f) / 0.58f));
             }
             else if (phase == 2)
             {
-                // 하강은 뒤 55% — 차량 하강과 동기
                 deckAmount = 1f - Mathf.SmoothStep(
                     0f,
                     1f,
-                    Mathf.Clamp01((progress - 0.45f) / 0.55f));
+                    Mathf.Clamp01(progress / 0.58f));
                 armAmount = 1f - Mathf.SmoothStep(
                     0f,
                     1f,
@@ -408,14 +403,20 @@ namespace ParkingSim.Runtime
                 if (travelX != 0 || travelZ != 0)
                 {
                     bool travelAlongX = travelX >= travelZ;
+                    int direction = travelAlongX
+                        ? (b.X >= a.X ? 1 : -1)
+                        : (b.Y >= a.Y ? 1 : -1);
                     int cellX = Mathf.RoundToInt(position.x);
                     int cellZ = Mathf.RoundToInt(position.z);
-                    float bestDistance = float.MaxValue;
-                    for (int step = -2; step <= 2; step++)
+                    // 전방 주시: 현재 셀부터 진행 방향 +3셀에서 가장 가까운
+                    // 수직 주차 차량의 레인을 목표로 한다 — 같은 방향 열이
+                    // 이어지면 유지, 전방 차의 방향이 다르면 그때 전환,
+                    // 전방에 차가 없으면 원래 라인으로 복귀.
+                    for (int step = 0; step <= 3; step++)
                     {
                         (int X, int Y) cell = travelAlongX
-                            ? (cellX + step, cellZ)
-                            : (cellX, cellZ + step);
+                            ? (cellX + step * direction, cellZ)
+                            : (cellX, cellZ + step * direction);
                         VehiclePose pose;
                         if (!TryGetParkedPose(cell, tick, robot, out pose))
                             continue;
@@ -424,30 +425,12 @@ namespace ParkingSim.Runtime
                         // 차 축과 평행 이동은 좌우 바퀴 사이 통로라 보정 불요
                         if (carHorizontal == travelAlongX) continue;
                         var second = pose.SecondCell;
-                        if (carHorizontal)
-                        {
-                            float distance = Mathf.Abs(position.z - pose.Y);
-                            if (distance <= 1.25f && distance < bestDistance)
-                            {
-                                bestDistance = distance;
-                                target = new Vector3(
-                                    (pose.X + second.X) * 0.5f - position.x,
-                                    0f,
-                                    0f);
-                            }
-                        }
-                        else
-                        {
-                            float distance = Mathf.Abs(position.x - pose.X);
-                            if (distance <= 1.25f && distance < bestDistance)
-                            {
-                                bestDistance = distance;
-                                target = new Vector3(
-                                    0f,
-                                    0f,
-                                    (pose.Y + second.Y) * 0.5f - position.z);
-                            }
-                        }
+                        target = carHorizontal
+                            ? new Vector3(
+                                (pose.X + second.X) * 0.5f - position.x, 0f, 0f)
+                            : new Vector3(
+                                0f, 0f, (pose.Y + second.Y) * 0.5f - position.z);
+                        break;
                     }
                 }
             }
