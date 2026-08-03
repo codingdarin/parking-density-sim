@@ -377,10 +377,11 @@ namespace ParkingSim.Runtime
         }
 
         /// <summary>
-        /// 하부 통과 레인 유지 스워브 — 같은 방향 주차열에 들어설 때 한 번
-        /// 축간 레인으로 옳기고, 열이 이어지는 동안 그 레인을 유지한다.
-        /// 방향이 다른 구간을 만나면 그때 한 번 더 옳긴다(로봇별 오프셋
-        /// 상태를 목표 레인으로 지수 수렴). 모델 좌표 불변 — 순수 시각 보정.
+        /// 하부 통과 레인 핀 — 수직 주차열을 지나는 동안 진행과 수직인 좌표를
+        /// 차량 축간 레인 값에 직접 고정한다. 계획 경로의 계단식(셀 지그재그)
+        /// 이동까지 흥수해 직선으로 보인다. 전방(0~+3셀)의 차 방향이 바뀌면
+        /// 그때 전환, 전방에 차가 없으면 관여도가 0으로 수렴해 복귀.
+        /// 모델 좌표 불변 — 순수 시각 보정.
         /// </summary>
         private Vector3 ApplyUnderCarSwerve(
             Vector3 position,
@@ -389,14 +390,12 @@ namespace ParkingSim.Runtime
             float tick,
             int robot)
         {
-            Vector3 target = Vector3.zero;
-            if (a.Carrying || b.Carrying)
-            {
-                // 적재 중 유닛+차량은 강체 — 잔여 오프셋을 즉시 소거
-                if (_swerveOffsets != null && robot < _swerveOffsets.Length)
-                    _swerveOffsets[robot] = Vector3.zero;
+            if (_swerveWeights == null || robot >= _swerveWeights.Length)
                 return position;
-            }
+            bool found = false;
+            float laneCoord = 0f;
+            bool laneIsX = false;
+            if (!a.Carrying && !b.Carrying)
             {
                 int travelX = Mathf.Abs(b.X - a.X);
                 int travelZ = Mathf.Abs(b.Y - a.Y);
@@ -408,10 +407,6 @@ namespace ParkingSim.Runtime
                         : (b.Y >= a.Y ? 1 : -1);
                     int cellX = Mathf.RoundToInt(position.x);
                     int cellZ = Mathf.RoundToInt(position.z);
-                    // 전방 주시: 현재 셀부터 진행 방향 +3셀에서 가장 가까운
-                    // 수직 주차 차량의 레인을 목표로 한다 — 같은 방향 열이
-                    // 이어지면 유지, 전방 차의 방향이 다르면 그때 전환,
-                    // 전방에 차가 없으면 원래 라인으로 복귀.
                     for (int step = 0; step <= 3; step++)
                     {
                         (int X, int Y) cell = travelAlongX
@@ -422,25 +417,59 @@ namespace ParkingSim.Runtime
                             continue;
                         bool carHorizontal =
                             pose.Orientation == VehicleOrientation.Horizontal;
-                        // 차 축과 평행 이동은 좌우 바퀴 사이 통로라 보정 불요
                         if (carHorizontal == travelAlongX) continue;
                         var second = pose.SecondCell;
-                        target = carHorizontal
-                            ? new Vector3(
-                                (pose.X + second.X) * 0.5f - position.x, 0f, 0f)
-                            : new Vector3(
-                                0f, 0f, (pose.Y + second.Y) * 0.5f - position.z);
+                        found = true;
+                        laneIsX = carHorizontal;
+                        laneCoord = carHorizontal
+                            ? (pose.X + second.X) * 0.5f
+                            : (pose.Y + second.Y) * 0.5f;
                         break;
                     }
                 }
             }
-            if (_swerveOffsets == null || robot >= _swerveOffsets.Length)
-                return position + target;
-            _swerveOffsets[robot] = Vector3.Lerp(
-                _swerveOffsets[robot],
-                target,
-                1f - Mathf.Exp(-7f * Time.deltaTime));
-            return position + _swerveOffsets[robot];
+            else
+            {
+                // 적재 중 유닛+차량은 강체 — 관여도 즉시 소거
+                _swerveWeights[robot] = 0f;
+                return position;
+            }
+
+            float ease = 1f - Mathf.Exp(-7f * Time.deltaTime);
+            if (found)
+            {
+                if (_swerveWeights[robot] <= 0.01f ||
+                    _swerveLaneIsX[robot] != laneIsX)
+                {
+                    // 새 레인 진입(또는 축 전환) — 축이 바뀌면 관여도부터 재시작
+                    if (_swerveLaneIsX[robot] != laneIsX)
+                        _swerveWeights[robot] = 0f;
+                    _swerveLanes[robot] = laneCoord;
+                    _swerveLaneIsX[robot] = laneIsX;
+                }
+                else
+                {
+                    // 같은 축의 다른 열(좌표 변경)은 레인 값을 부드럽게 이동
+                    _swerveLanes[robot] = Mathf.Lerp(
+                        _swerveLanes[robot], laneCoord, ease);
+                }
+                _swerveWeights[robot] =
+                    Mathf.Lerp(_swerveWeights[robot], 1f, ease);
+            }
+            else
+            {
+                _swerveWeights[robot] =
+                    Mathf.Lerp(_swerveWeights[robot], 0f, ease);
+            }
+
+            if (_swerveWeights[robot] <= 0.001f) return position;
+            if (_swerveLaneIsX[robot])
+                position.x = Mathf.Lerp(
+                    position.x, _swerveLanes[robot], _swerveWeights[robot]);
+            else
+                position.z = Mathf.Lerp(
+                    position.z, _swerveLanes[robot], _swerveWeights[robot]);
+            return position;
         }
 
         /// <summary>해당 셀에 지금 서 있는 주차 차량 pose — 고정 차량 + 아직

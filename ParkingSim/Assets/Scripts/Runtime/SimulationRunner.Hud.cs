@@ -268,28 +268,29 @@ namespace ParkingSim.Runtime
             // 커스텀 시크 바 — 어두운 트랙 + 시안 채움 + 핸들 (기본 슬라이더
             // 스킨은 회색이라 현재 지점이 안 보임). 클릭·드래그로 시점 이동.
             Rect track = new Rect(x, y + 34f, bar.width - 24f, 18f);
-            GUI.Box(track, string.Empty);
-            GUI.Box(track, string.Empty);
             float fraction = _plan.Ticks > 0
                 ? Mathf.Clamp01(shownTick / _plan.Ticks)
                 : 0f;
             float innerWidth = track.width - 4f;
-            Color previousColor = GUI.color;
-            GUI.color = new Color(0.10f, 0.92f, 1f, 1f);
+            // GUI.Box 틴트는 스킨 텍스처에 곱해져 거의 검은색이 된다 —
+            // 백색 텍스처 단색 렌더로 트랙/채움/핸들을 직접 그린다.
+            GUI.DrawTexture(
+                track, Texture2D.whiteTexture, ScaleMode.StretchToFill,
+                false, 0f, new Color(0f, 0f, 0f, 0.62f), 0f, 5f);
             Rect fill = new Rect(
                 track.x + 2f,
                 track.y + 2f,
-                Mathf.Max(2f, innerWidth * fraction),
+                Mathf.Max(3f, innerWidth * fraction),
                 track.height - 4f);
-            GUI.Box(fill, string.Empty);
-            GUI.Box(fill, string.Empty);
-            GUI.Box(fill, string.Empty);
+            GUI.DrawTexture(
+                fill, Texture2D.whiteTexture, ScaleMode.StretchToFill,
+                false, 0f, new Color(0.10f, 0.92f, 1f, 0.95f), 0f, 4f);
             float handleX = track.x + 2f + innerWidth * fraction;
             Rect handle = new Rect(
                 handleX - 4f, track.y - 3f, 8f, track.height + 6f);
-            GUI.Box(handle, string.Empty);
-            GUI.Box(handle, string.Empty);
-            GUI.color = previousColor;
+            GUI.DrawTexture(
+                handle, Texture2D.whiteTexture, ScaleMode.StretchToFill,
+                false, 0f, Color.white, 0f, 3f);
 
             Event current = Event.current;
             Rect hitArea = new Rect(
