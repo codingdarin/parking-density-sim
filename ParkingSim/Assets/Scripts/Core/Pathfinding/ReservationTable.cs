@@ -31,5 +31,12 @@ namespace ParkingSim.Core.Pathfinding
             if (_permanentFrom.TryGetValue((x, y), out int cur) && cur <= t) return;
             _permanentFrom[(x, y)] = t;
         }
+
+        /// <summary>
+        /// 영구 예약 해제 — 주차 중인 로봇이 다음 미션으로 재출발할 때 사용 (미션 체이닝).
+        /// 해제 후 유휴 구간은 호출부가 ReserveStep으로 유한 예약해야 한다.
+        /// (해제 전에 계획된 타 미션은 이 셀을 회피했으므로 보수적이지만 여전히 유효)
+        /// </summary>
+        public void ReleasePermanent(int x, int y) => _permanentFrom.Remove((x, y));
     }
 }

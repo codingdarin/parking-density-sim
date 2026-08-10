@@ -17,39 +17,35 @@ namespace ParkingSim.Scenarios
         {
             var lot = ParkingLayoutBuilder.Build(new LayoutConfig { OccupiedLanes = 3 });
             var g = lot.Grid;
-            var reservations = new ReservationTable();
             var liftTicks = new Dictionary<int, int>();
             const int maxTick = 600;
 
-            // 우선순위 순: (시작, 대상 차량 앵커, 하차 앵커, 홈)
-            // 순서 주의 — 우선순위 배정이 해의 존재를 좌우한다 (Prioritized Planning의 속성):
-            // 로봇 4는 로봇 1이 (8,2)를 들어올린 뒤에만 (10,2)에 접근 가능하므로 로봇 1 다음,
-            // 그러나 2·3보다는 먼저 계획해야 세 대가 레인을 쓸기 전에 슬롯을 확보한다
-            // (마지막 순번이면 3레인 팔랑크스 앞에 갇혀 프런티어에서 퇴로가 없음 → 계획 실패).
-            var missions = new (int Robot, (int X, int Y) Start, (int X, int Y) Target, (int X, int Y) Drop, (int X, int Y)? Home)[]
+            // 미션은 자연 순서(1,2,3,4)로 정의 — 우선순위 배정은 MissionPlanner가 결정론적으로 처리:
+            // 기본 순서 실패 시 시드 순열 재시도. (수동 순서 조정 금지 — D9 스윕에서 재현 불가)
+            // 참고: 자연 순서는 로봇 4가 3레인 팔랑크스에 갇혀 실패함이 알려져 있음 → 재시도 검증 겸용.
+            Car FindCar(int x, int y) => lot.Cars.First(c => c.X == x && c.Y == y && c.InCorridor);
+            var missions = new List<CarryMission>
             {
-                (1, (0, 2), (8, 2), (0, 2), (2, 4)),
-                (4, (1, 3), (10, 2), (0, 2), null), // 하차 위치에 주차 (로봇 1이 비운 뒤)
-                (2, (0, 4), (8, 4), (0, 4), (1, 4)),
-                (3, (0, 3), (8, 3), (0, 3), (1, 3)),
+                new CarryMission(1, (0, 2), FindCar(8, 2), (0, 2), (2, 4)),
+                new CarryMission(2, (0, 4), FindCar(8, 4), (0, 4), (1, 4)),
+                new CarryMission(3, (0, 3), FindCar(8, 3), (0, 3), (1, 3)),
+                new CarryMission(4, (1, 3), FindCar(10, 2), (0, 2), null), // 하차 위치에 주차
             };
 
-            var timelines = new List<RobotTimeline>();
-            foreach (var m in missions)
+            var plan = MissionPlanner.TryPlanAll(g, missions, seed: 42, maxAttempts: 24, maxTick);
+            if (plan == null)
             {
-                var target = lot.Cars.First(c => c.X == m.Target.X && c.Y == m.Target.Y && c.InCorridor);
-                var tl = CooperativePlanner.PlanCarryMission(
-                    g, reservations, liftTicks, m.Robot, m.Start, target, m.Drop, m.Home, maxTick);
-                if (tl == null)
-                {
-                    Console.WriteLine($"로봇 {m.Robot} 계획 실패 — 중단");
-                    return;
-                }
-                timelines.Add(tl);
-                Console.WriteLine(
-                    $"로봇 {m.Robot}: 차량 {target.Id} @({target.X},{target.Y}) → ({m.Drop.X},{m.Drop.Y})" +
-                    $" | 적재 t={tl.LiftTick}, 하차 t={tl.DropTick}, 종료 t={tl.EndTick}, 대기 {tl.WaitTicks}틱");
+                Console.WriteLine("함대 계획 실패 (24회 순열 소진) — 확보 실패로 기록될 상황");
+                return;
             }
+            var timelines = plan.Timelines.ToList();
+            foreach (var kv in plan.CarLiftTicks) liftTicks[kv.Key] = kv.Value;
+
+            Console.WriteLine($"함대 계획: {plan.Attempts}회 시도, 채택 순서 = [{string.Join(",", plan.OrderUsed.Select(i => missions[i].RobotId))}]");
+            foreach (var tl in timelines)
+                Console.WriteLine(
+                    $"로봇 {tl.RobotId}: 차량 {tl.TargetCarId}" +
+                    $" | 적재 t={tl.LiftTick}, 하차 t={tl.DropTick}, 종료 t={tl.EndTick}, 대기 {tl.WaitTicks}틱");
 
             int endTick = timelines.Max(t => t.EndTick);
             Console.WriteLine($"\n계획 완료 — 전체 종료 t={endTick} ≈ {endTick * GridMap.SecondsPerCell:0}초");
