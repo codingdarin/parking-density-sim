@@ -35,3 +35,13 @@ output/*.md
 # ===== IDE =====
 .idea/
 .vscode/
+
+# ===== 공개 제외 — 라이선스·저작권 (로컬에만 보관) =====
+# 에셋 스토어 원본: 재배포 불가 (각 폴더 SOURCE.md 참조)
+ParkingSim/Assets/Imported/
+ParkingSim/Assets/Imported.meta
+# 발표 자료: 기사 캡처 저작권·단지 실명 포함
+docs/pitch/
+
+# ===== Claude Code 세션 =====
+.claude/
