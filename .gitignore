@@ -43,5 +43,24 @@ ParkingSim/Assets/Imported.meta
 # 발표 자료: 기사 캡처 저작권·단지 실명 포함
 docs/pitch/
 
-# ===== Claude Code 세션 =====
+# ===== AI coding assistant metadata =====
+AGENTS.md
+CLAUDE.md
+GEMINI.md
+COPILOT.md
+.agents/
 .claude/
+.codex/
+.cursor/
+.windsurf/
+.github/copilot-instructions.md
+*.prompt.md
+
+# ===== Secrets and local configuration =====
+.env
+.env.*
+!.env.example
+*.pem
+*.key
+credentials.json
+secrets.json
